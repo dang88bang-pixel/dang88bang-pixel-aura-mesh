@@ -3,7 +3,12 @@ package com.swarmradar.app.domain.model
 import org.ejml.simple.SimpleMatrix
 
 /** Einfacher 3D-Vektor (frei von Android-/Sceneform-Abhängigkeiten). */
-data class Vector3(val x: Double, val y: Double, val z: Double)
+data class Vector3(val x: Double, val y: Double, val z: Double) {
+    operator fun plus(o: Vector3) = Vector3(x + o.x, y + o.y, z + o.z)
+    operator fun minus(o: Vector3) = Vector3(x - o.x, y - o.y, z - o.z)
+    operator fun times(s: Double) = Vector3(x * s, y * s, z * s)
+    operator fun div(s: Double) = Vector3(x / s, y / s, z / s)
+}
 
 /** Quaternion (x, y, z, w) für Orientierung. */
 data class Quaternion(val x: Double, val y: Double, val z: Double, val w: Double)
