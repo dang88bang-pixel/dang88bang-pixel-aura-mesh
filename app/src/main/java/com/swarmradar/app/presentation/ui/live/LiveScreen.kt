@@ -17,13 +17,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.swarmradar.app.presentation.threeD.PointCloudCanvas
+import com.swarmradar.app.presentation.threeD.SceneformView
 
 @Composable
 fun LiveScreen(viewModel: LiveViewModel = viewModel()) {
     val state = viewModel.uiState.collectAsState().value
     Box(modifier = Modifier.fillMaxSize()) {
-        PointCloudCanvas(
+        SceneformView(
             points = state.points,
             objects = state.objects,
             modifier = Modifier.fillMaxSize()
