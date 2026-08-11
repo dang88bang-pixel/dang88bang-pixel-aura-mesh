@@ -34,3 +34,19 @@ python3 -m http.server 8000
 | ③ Externe Sensor-Fusion | **Ja** | 0,1–0,3 m | **Hervorragend** |
 | ④ KI-basierte Hypothesen | Virtuell | Statistisch | Befriedigend |
 | ⑤ Hybrid-BIM-Mapping | Virtuell | 0,5–1,5 m | Gut (IoT-Overlay) |
+
+## Build & CI
+
+Das Android-Projekt liegt unter `app/` (Package `com.swarmradar.app`). Zum Bauen:
+
+1. **Gradle-Wrapper-JAR erzeugen** (einmalig, da Binärdateien hier nicht eingecheckt sind):
+   ```bash
+   gradle wrapper        # erfordert eine lokale Gradle-Distribution
+   ```
+   Danach ist `gradle-wrapper.jar` vorhanden und `./gradlew` nutzbar.
+2. **Debug-APK bauen:**
+   ```bash
+   ./gradlew assembleDebug
+   ```
+
+Eine GitHub-Actions-Pipeline (`.github/workflows/build.yml`) baut automatisch den Debug-Build auf einem Ubuntu-Runner (JDK 17, Android SDK, Gradle 8.9) – inkl. Bootstrap des Wrapper-JARs.
