@@ -1,0 +1,50 @@
+[versions]
+agp = "8.5.2"
+kotlin = "1.9.24"
+coreKtx = "1.13.1"
+lifecycleKtx = "2.8.0"
+composeBom = "2024.10.00"
+material3 = "1.2.1"
+activityCompose = "1.9.0"
+navigationCompose = "2.7.7"
+hilt = "2.52"
+room = "2.6.1"
+ejml = "0.43.1"
+paho = "1.2.5"
+pahoAndroid = "1.1.1"
+sceneform = "1.17.1"
+usbSerial = "3.8.0"
+coroutines = "1.8.1"
+
+[libraries]
+core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleKtx" }
+coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+compose-ui = { group = "androidx.compose.ui", name = "ui" }
+compose-material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "material3" }
+compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
+
+hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
+hilt-compiler = { group = "com.google.dagger", name = "hilt-compiler", version.ref = "hilt" }
+hilt-nav-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version = "1.2.0" }
+
+room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+
+ejml = { group = "org.ejml", name = "ejml-simple", version.ref = "ejml" }
+paho = { group = "org.eclipse.paho", name = "org.eclipse.paho.client.mqttv3", version.ref = "paho" }
+paho-android = { group = "org.eclipse.paho", name = "org.eclipse.paho.android.service", version.ref = "pahoAndroid" }
+sceneform = { group = "com.google.ar", name = "sceneform", version.ref = "sceneform" }
+usb-serial = { group = "com.github.mik3y", name = "usb-serial-for-android", version.ref = "usbSerial" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-kapt = { id = "org.jetbrains.kotlin.kapt", version.ref = "kotlin" }
+hilt-android = { id = "dagger.hilt.android.plugin", version.ref = "hilt" }
+google-ar-sceneform = { id = "com.google.ar.sceneform.plugin", version.ref = "sceneform" }
