@@ -119,7 +119,7 @@ web-visualizer/                  Babylon.js 7
 
 docs/
   architecture.md                design and rationale
-  api_reference.md               38 routes (36 REST + WS + /health)
+  api_reference.md               39 routes (37 REST + WS + /health)
   performance_targets.md         measured vs specified, and why
   android_build.md               how to actually assemble the APK
   source_claims.md               every hardware constant, and how sure we are
@@ -128,6 +128,7 @@ docs/
   tactical_integration_assessment.md  CoT/TAK, Meshtastic, ATAK: what applies here
   mesh_transport.md              LoRa packet budget + duty cycle; why CoT XML needs a codec
   geo_anchor.md                  GNSS anchor + why its error dominates exported accuracy
+  uwb_tdoa.md                    TDoA solver; why sync is the constraint and TWR is the default
   user_manual.md                 field guide (German)
 
 tools/

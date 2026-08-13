@@ -184,6 +184,53 @@ entry.
 
 ---
 
+## UWB TDoA
+
+### `POST /api/v1/agent/uwb/tdoa`
+
+Hyperbolic multilateration of a **cooperating** UWB tag from arrival-time
+differences. It does not locate unknown or non-transmitting devices — see
+`docs/uwb_tdoa.md` §2.
+
+```json
+{
+  "anchors": [{"id": "a0", "x": 0, "y": 0}, {"id": "a1", "x": 10, "y": 0},
+              {"id": "a2", "x": 10, "y": 8}, {"id": "a3", "x": 0, "y": 8}],
+  "tdoa_m": {"a1": 2.0, "a2": 0.44, "a3": -2.22},
+  "sync_sigma_ns": 0.1
+}
+```
+
+`sync_sigma_ns` is **required** — 1 ns of anchor clock offset is 30 cm of
+range error, so there is no safe default. `tdoa_m` omits the reference anchor
+(differences are measured against it); pass `reference` explicitly if more
+than one anchor is missing.
+
+```json
+{
+  "fix": {"x": 3.4991, "y": 5.5026, "sigma_m": 0.1206, "residual_m": 0.0031,
+          "anchors_used": 4, "iterations": 5, "gdop": 0.817},
+  "diagnostic_only_fix": null,
+  "usable_sync": true,
+  "sync_range_sigma_m": 0.03,
+  "max_usable_sync_ns": 10.0,
+  "warning": null,
+  "note": null
+}
+```
+
+- `sigma_m` combines the geometry (GDOP), the ranging noise **and** the clock
+  sync term. It is never smaller than the sync floor.
+- Above `max_usable_sync_ns` the fix is **withheld**: `fix` becomes `null` and
+  the position moves to `diagnostic_only_fix`, so no client renders a marker
+  from a sync figure that cannot support one.
+- `fix: null` with `diagnostic_only_fix: null` means no solution at all — under
+  3 differences, collinear anchors, GDOP > 20, or divergence.
+- **400** if fewer than 3 anchors or an anchor coordinate is non-finite;
+  **422** if `sync_sigma_ns` is missing.
+
+---
+
 ## Configuration & mesh
 
 | Route | Method | Purpose |

@@ -53,7 +53,7 @@ and stop there.
 
 ## D. Confirmed complete (no action)
 
-- **Edge agent** — all 6 spec routes live, 38 routes total, 222 tests.
+- **Edge agent** — all 6 spec routes live, 39 routes total, 247 tests.
 - **Web visualiser** — all 10 buttons wired; `export/gltf` and `export/json`
   both return 200 against the running agent.
 - **Native core** — 618 checks; JNI 28/28 both directions.

@@ -33,6 +33,7 @@ from .mesh import MESHTASTIC_SAFE_PAYLOAD, MeshCodec
 from .rti import RtiGrid, RtiProcessor
 from .scenarios import SCENARIO_TYPES, ScenarioParams
 from .storage import LocalVectorStore
+from .tdoa import MAX_USABLE_SYNC_NS, TdoaError, TdoaSolver, sync_to_range_sigma
 from .voxel import LABEL_NAMES, VoxelWorld
 
 LOGGER = logging.getLogger("aura.api")
@@ -91,6 +92,27 @@ class RtiNodeSpec(BaseModel):
     id: str
     x: float
     y: float
+
+
+class TdoaAnchorSpec(BaseModel):
+    id: str
+    x: float
+    y: float
+
+
+class TdoaSolveRequest(BaseModel):
+    """Hyperbolic multilateration from arrival-time differences.
+
+    `sync_sigma_ns` has no default on purpose. TDoA multiplies clock error by
+    c, so 1 ns is 30 cm; assuming perfect sync is the mistake this endpoint
+    exists to prevent.
+    """
+
+    anchors: list[TdoaAnchorSpec]
+    tdoa_m: dict[str, float]
+    sync_sigma_ns: float = Field(ge=0.0, le=1e9)
+    reference: str | None = None
+    range_sigma_m: float = Field(default=0.10, ge=0.0, le=100.0)
 
 
 class GeoAnchorRequest(BaseModel):
@@ -413,6 +435,54 @@ def create_app(config: AgentConfig | None = None, autostart: bool = True) -> Fas
         encoder = CotEncoder(anchor, callsign=cfg.cot_callsign)
         people = [t.as_dict() for t in pipeline.people.tracks.values()] if include_contacts else []
         return encoder.events_for_state(pipeline.state(), people)
+
+    @app.post("/api/v1/agent/uwb/tdoa", tags=["uwb"], dependencies=auth)
+    def post_uwb_tdoa(request: TdoaSolveRequest) -> dict:
+        """Locate a UWB tag from arrival-time differences.
+
+        Note what this is not: TDoA needs a **cooperating tag** transmitting a
+        UWB blink on the agreed channel. It does not discover arbitrary
+        unknown transmitters. For non-cooperating people see the RTI and
+        mmWave paths in docs/rf_reconstruction.md.
+        """
+        try:
+            solver = TdoaSolver(
+                anchors={a.id: (a.x, a.y) for a in request.anchors},
+                sync_sigma_ns=request.sync_sigma_ns,
+                range_sigma_m=request.range_sigma_m,
+            )
+        except TdoaError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        fix = solver.solve(request.tdoa_m, reference=request.reference)
+
+        # A fix computed on unusable sync is withheld, not merely flagged.
+        # It carries an honest multi-kilometre sigma, but any caller that
+        # plots position and ignores sigma would draw a confident marker --
+        # the same class of bug as dropping the geo-anchor sigma from `ce`.
+        # It stays available under a name nobody will render by accident.
+        withheld = fix is not None and not solver.usable
+        note = None
+        if withheld:
+            note = (
+                "fix withheld: anchor sync is too coarse for TDoA to mean "
+                "anything. See diagnostic_only_fix and the warning field."
+            )
+        elif fix is None:
+            note = (
+                "no fix: too few differences, degenerate anchor geometry, or the "
+                "solve diverged. Returning nothing beats publishing a wild position."
+            )
+
+        return {
+            "fix": None if withheld else (fix.as_dict() if fix else None),
+            "diagnostic_only_fix": fix.as_dict() if withheld else None,
+            "usable_sync": solver.usable,
+            "sync_range_sigma_m": round(sync_to_range_sigma(request.sync_sigma_ns), 4),
+            "max_usable_sync_ns": MAX_USABLE_SYNC_NS,
+            "warning": solver.sync_warning(),
+            "note": note,
+        }
 
     @app.post("/api/v1/agent/geo/anchor", tags=["map"], dependencies=auth)
     def post_geo_anchor(request: GeoAnchorRequest) -> dict:

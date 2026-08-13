@@ -393,3 +393,74 @@ def test_websocket_unknown_command(client):
                 break
         else:
             pytest.fail("unknown command not reported")
+
+
+# ---------------------------------------------------------------------------
+# UWB TDoA
+# ---------------------------------------------------------------------------
+
+_TDOA_ANCHORS = [
+    {"id": "a0", "x": 0.0, "y": 0.0},
+    {"id": "a1", "x": 10.0, "y": 0.0},
+    {"id": "a2", "x": 10.0, "y": 8.0},
+    {"id": "a3", "x": 0.0, "y": 8.0},
+]
+
+
+def _tdoa_for(truth=(3.5, 5.5)):
+    import math
+    pos = {a["id"]: (a["x"], a["y"]) for a in _TDOA_ANCHORS}
+    r0 = math.dist(truth, pos["a0"])
+    return {k: math.dist(truth, pos[k]) - r0 for k in ("a1", "a2", "a3")}
+
+
+def test_tdoa_solves_with_wired_class_sync(client):
+    response = client.post("/api/v1/agent/uwb/tdoa", json={
+        "anchors": _TDOA_ANCHORS, "tdoa_m": _tdoa_for(), "sync_sigma_ns": 0.1,
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["usable_sync"] is True
+    assert body["warning"] is None
+    assert body["fix"]["x"] == pytest.approx(3.5, abs=0.01)
+    assert body["fix"]["y"] == pytest.approx(5.5, abs=0.01)
+    assert body["fix"]["anchors_used"] == 4
+
+
+def test_tdoa_withholds_the_fix_when_sync_is_unusable(client):
+    """NTP-class sync must not yield a plottable position."""
+    response = client.post("/api/v1/agent/uwb/tdoa", json={
+        "anchors": _TDOA_ANCHORS, "tdoa_m": _tdoa_for(), "sync_sigma_ns": 1_000_000.0,
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["fix"] is None, "unusable sync must not produce a renderable fix"
+    assert body["usable_sync"] is False
+    assert body["diagnostic_only_fix"] is not None
+    assert body["sync_range_sigma_m"] > 1000.0
+    assert "wired backbone" in body["warning"]
+
+
+def test_tdoa_sigma_carries_the_sync_term(client):
+    def sigma(sync_ns):
+        return client.post("/api/v1/agent/uwb/tdoa", json={
+            "anchors": _TDOA_ANCHORS, "tdoa_m": _tdoa_for(),
+            "sync_sigma_ns": sync_ns,
+        }).json()["fix"]["sigma_m"]
+
+    assert sigma(5.0) > sigma(0.1) * 5
+
+
+def test_tdoa_rejects_two_anchors(client):
+    response = client.post("/api/v1/agent/uwb/tdoa", json={
+        "anchors": _TDOA_ANCHORS[:2], "tdoa_m": {"a1": 1.0}, "sync_sigma_ns": 0.1,
+    })
+    assert response.status_code == 400
+
+
+def test_tdoa_requires_an_explicit_sync_figure(client):
+    """Omitting sync must fail loudly rather than assume perfect clocks."""
+    response = client.post("/api/v1/agent/uwb/tdoa", json={
+        "anchors": _TDOA_ANCHORS, "tdoa_m": _tdoa_for(),
+    })
+    assert response.status_code == 422
