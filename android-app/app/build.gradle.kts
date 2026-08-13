@@ -86,6 +86,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     implementation("androidx.lifecycle:lifecycle-service:2.8.4")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.4")
+    // registerForActivityResult / ActivityResultContracts in MainActivity.
+    // Not reliably transitive via fragment-ktx; declare it explicitly.
+    implementation("androidx.activity:activity-ktx:1.9.1")
     implementation("androidx.fragment:fragment-ktx:1.8.2")
     // Required by MainActivity's tab pager. Missing this is a hard build error;
     // it is NOT transitively provided by material or appcompat.

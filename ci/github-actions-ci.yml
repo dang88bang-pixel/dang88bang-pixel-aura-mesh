@@ -46,6 +46,23 @@ jobs:
               tests/test_aura_core.cpp aura_core.cpp -o aura_test_asan
           ./aura_test_asan
 
+      - name: Build the JNI layer and the llama stub
+        working-directory: android-app/app/src/main/cpp
+        run: |
+          # A minimal jni.h lets us compile-check the JNI layer without the NDK.
+          mkdir -p /tmp/jnistub && cp tests/jni_stub.h /tmp/jnistub/jni.h
+          g++ -std=c++17 -O1 -shared -fPIC -I/tmp/jnistub -I. \
+              aura_jni.cpp aura_core.cpp -o /tmp/libaura_core.so
+          g++ -std=c++17 -O1 -shared -fPIC -I/tmp/jnistub -I. \
+              llama_bridge.cpp -o /tmp/libllama_bridge.so
+
+      - name: JNI symbols must match the Kotlin declarations
+        run: |
+          # A mismatch is NOT a build error - it is an UnsatisfiedLinkError on
+          # the device, at the moment the feature is first used.
+          python3 tools/check-jni-symbols.py \
+            --library /tmp/libaura_core.so --library /tmp/libllama_bridge.so
+
   kotlin-logic:
     name: Kotlin logic (host JVM, no Android SDK)
     runs-on: ubuntu-latest

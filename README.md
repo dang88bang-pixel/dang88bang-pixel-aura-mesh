@@ -21,6 +21,7 @@ CT45P-X0N (Kotlin + C++/NEON)  ──REST/WS──▶  Edge agent (Python)  ─�
 | Native core (C++17/NEON) | compiles, cross-checked vs Python | **618 assertions pass** |
 | Web visualiser (Babylon.js) | working, runnable | live against the agent at 10 Hz |
 | Kotlin audit chain | compiles and runs on a host JVM | **44 checks pass**, digests pinned to Python |
+| JNI layer | compiled against a stub `jni.h` | **28/28 symbols matched** both ways |
 | Android app (full APK) | complete source, **never assembled** | no Android SDK reachable here |
 
 Nuance on the last two rows: the Kotlin classes with no Android dependency —
@@ -125,6 +126,7 @@ docs/
 
 tools/
   run-kotlin-tests.sh            host-JVM Kotlin suite (no Android SDK)
+  check-jni-symbols.py           external fun <-> Java_* symbol cross-check
   bundle-visualizer.sh           build the Babylon bundle into app assets
   generate_audit_fixtures.py     regenerate the cross-platform digests
 ```
@@ -144,6 +146,9 @@ g++ -std=c++17 -O2 -I.. test_aura_core.cpp ../aura_core.cpp -o /tmp/aura_test
 
 # Kotlin: 44 checks, needs only a JRE + kotlinc (no Android SDK)
 tools/run-kotlin-tests.sh
+
+# JNI: every `external fun` must have a matching native symbol
+tools/check-jni-symbols.py --source-only
 ```
 
 The native suite cross-checks the C++ port against values produced by the

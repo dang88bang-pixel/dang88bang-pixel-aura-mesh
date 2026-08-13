@@ -13,6 +13,8 @@ honest list of where problems are most likely to surface.
 | `CausalValidator.kt` | `kotlinc` + host JVM (`tools/run-kotlin-tests.sh`) | **44 checks pass** |
 | Manifest ↔ classes/resources | static gates in CI (`android-static`) | clean |
 | Imports ↔ Gradle dependencies | static gate in CI | clean |
+| JNI symbols ↔ `external fun` | `tools/check-jni-symbols.py`, both directions | **28/28 matched** |
+| `aura_jni.cpp`, `llama_bridge.cpp` | compiled with g++ against a stub `jni.h` | build clean |
 
 ## What is unverified
 
@@ -101,34 +103,51 @@ Default is Qwen2.5-1.5B (10–16 t/s on a QCS4290); Phi-3-mini is opt-in at
 
 Ranked by how much I would bet on each one failing first.
 
-1. **`llama_bridge` does not exist.** `LLMService` declares `external` methods
-   and loads a library that this repository does not contain — llama.cpp has to
-   be vendored and wired into CMake. The `System.loadLibrary` call is already
-   wrapped in `runCatching`, so the app starts without it and the assistant is
-   simply unavailable. Everything else keeps working.
-
-2. **JNI symbol names.** `aura_jni.cpp` hard-codes
-   `Java_com_aura_agent_fusion_NativeEkf_nativeCreate` and friends. Any package
-   or class rename silently produces `UnsatisfiedLinkError` at runtime, not a
-   build error. If you move a class, regenerate with `javah`/`javac -h`.
-
-3. **`usb-serial-for-android` wiring.** `UsbSerialTransport` sets up permission
+1. **`usb-serial-for-android` wiring.** `UsbSerialTransport` sets up permission
    and device discovery but leaves the concrete `UsbSerialPort#open` to the
    driver implementation — the streams are never assigned. Expect to finish this
    against real hardware; the parsers it feeds are already tested (see
    `test_lidar_packet_parser_decodes_legacy_nodes`).
 
-4. **UWB on Android 11.** The CT45P-X0N ships API 30; `androidx.core.uwb`
+2. **UWB on Android 11.** The CT45P-X0N ships API 30; `androidx.core.uwb`
    requires 31+. The dependency is declared but must be reached reflectively or
    behind a `Build.VERSION` guard, otherwise it is a runtime crash on the actual
    target device.
 
-5. **`VpnService` is single-instance.** `GatekeeperVpnService` and any WireGuard
+3. **`VpnService` is single-instance.** `GatekeeperVpnService` and any WireGuard
    tunnel are mutually exclusive per app. Choose one at provisioning time.
 
-6. **Foreground-service types.** `location|connectedDevice` on Android 14
+4. **Foreground-service types.** `location|connectedDevice` on Android 14
    requires the matching runtime permissions to be granted *before*
    `startForeground`, or the service is killed with a `SecurityException`.
+
+### Resolved since the first draft
+
+Two items that used to head this list are now closed:
+
+* **`llama_bridge` missing** — implemented as a *separate* optional library
+  (`llama_bridge.cpp`). It builds by default in **stub mode**, which provides
+  the four JNI symbols and returns an honest "not compiled in" message. Without
+  a stub, every `LLMService` call throws `UnsatisfiedLinkError`, which at the
+  call site is indistinguishable from a genuine crash. For the real backend:
+
+  ```bash
+  git submodule add https://github.com/ggerganov/llama.cpp \
+      android-app/app/src/main/cpp/vendor/llama.cpp
+  # then configure the NDK build with -DAURA_WITH_LLAMA=ON
+  ```
+
+  The sensor pipeline never depends on it: `libaura_core.so` and
+  `libllama_bridge.so` are separate targets, so a device with no model boots
+  and maps normally.
+
+* **JNI symbol names** — now machine-checked in both directions by
+  `tools/check-jni-symbols.py`, which parses the *enclosing class* (so a nested
+  `object NativeEngine` mangles correctly) and compares against `nm` output or
+  the C++ sources. It found a real gap on first run: the C++ exported
+  `NativePassiveRadar_nativeProcess`/`nativeCfar` but no such Kotlin class
+  existed, leaving the whole radar path unreachable from the app. The class is
+  now written.
 
 ---
 
@@ -154,3 +173,16 @@ verify on the server:
   round-trip.
 
 If you change `aura/audit.py` or `CausalValidator.kt`, run this before pushing.
+
+## Checking the JNI layer
+
+```bash
+tools/check-jni-symbols.py --source-only          # no build required
+# or, against real libraries:
+tools/check-jni-symbols.py --library build/.../libaura_core.so \
+                           --library build/.../libllama_bridge.so
+```
+
+Run this after **any** rename of a class or package under `com.aura.agent`.
+A mismatch produces no build error whatsoever — only a crash on the device the
+first time the feature is used.

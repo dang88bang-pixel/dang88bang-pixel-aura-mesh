@@ -174,6 +174,9 @@ each was found by a test rather than by inspection.
 | **Kotlin collapsed `1000.0` to `1000`** | canonical JSON differed from Python, so **every** audit entry written on a CT45P failed verification on the agent (every timestamp is a float) | render doubles exactly as Python's `json.dumps`; pinned by cross-platform fixtures |
 | **`(1.001 * 1000.0).toLong()` floored to 1000** | IEEE-754 gives `1000.9999999999999`; every restored entry not on a whole second failed to verify | `Math.round` instead of truncation |
 | `viewpager2` imported but never declared | guaranteed `assembleDebug` failure — it is not transitive via material/appcompat | added the dependency |
+| `androidx.activity.result` imported but never declared | same, for the permission launcher | added `activity-ktx` |
+| C++ exported `NativePassiveRadar_*`, no such Kotlin class | the entire passive-radar path was unreachable from the app | wrote `NativePassiveRadar.kt`; now machine-checked |
+| `LLMService` loaded a library that did not exist | four `external fun`s with no symbol → `UnsatisfiedLinkError` indistinguishable from a crash | `llama_bridge.cpp`, stub by default, real backend behind `-DAURA_WITH_LLAMA=ON` |
 | `GatekeeperVpnService` declared in the manifest, class absent | manifest-merger/runtime failure | implemented the service |
 | No launcher icon, empty Gradle wrapper dir | build could not produce an APK | vector adaptive icon + wrapper properties and script |
 
