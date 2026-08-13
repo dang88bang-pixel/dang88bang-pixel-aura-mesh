@@ -29,8 +29,8 @@ and stop there.
 | ~~**A2**~~ | ~~`ScenarioFragment` inert~~ | — | **DONE**. Spinner + 3 sliders + start/stop/progress/metrics, verified end-to-end against the running agent. | M |
 | ~~**A3**~~ | ~~`SettingsFragment` inert~~ | — | **DONE**. Agent URL, mmWave power, on-device audit verification, storage and native diagnostics. | M |
 | ~~**A4**~~ | ~~`AgentApiClient` never constructed~~ | — | **DONE**. One shared instance on `AuraApplication`, URL persisted and shared with the WebView. | S |
-| **A5** | `NativeRti` never constructed | no call sites | The RTI imaging path is unreachable from the app. | S |
-| **A6** | `NativePassiveRadar` never constructed | no call sites | Same, for passive radar. | S |
+| ~~**A5**~~ | ~~`NativeRti` never constructed~~ | — | **DONE**. `configureRti()`/`onRtiSample()` on the service, guarded by a voxel ceiling. Pipeline verified against the Python reference: attenuating the crossing links localises a target at (3.0, 3.0), the exact intersection. | S |
+| **A6** | `NativePassiveRadar` never constructed | no call sites | Unreachable. Needs an RTL-SDR attached; deferred until the USB path can be tested on hardware. | S |
 | **A7** | `LLMService` never constructed | no call sites | The offline assistant is unreachable. | M |
 | ~~**A8**~~ | ~~`fab_save_map` does nothing~~ | — | **DONE**. Saves a map snapshot to the audit chain. `toolbar` is decorative and intentionally unbound. | XS |
 
@@ -40,8 +40,8 @@ and stop there.
 |---|---|---|
 | **B1** | USB-serial wiring | **done** (commit `0c2906c`) |
 | **B2** | UWB on API 30 | **done** (reflective path, `0c2906c`) |
-| **B3** | `VpnService` single-instance | documented; needs a provisioning-time guard so both cannot be enabled |
-| **B4** | Foreground-service types on Android 14 | **unverified** — permissions must be granted *before* `startForeground` or the service is killed |
+| ~~**B3**~~ | ~~`VpnService` single-instance~~ | **DONE**. `prepare()` is checked first; if another tunnel holds the interface the service refuses rather than tearing down the link the operator depends on. |
+| ~~**B4**~~ | ~~Foreground-service types on Android 14~~ | **DONE**. The type mask is assembled from permissions actually granted, so a survey with BLE but no location still runs instead of dying with a `SecurityException`. |
 
 ## C. Verification gaps
 
@@ -73,10 +73,11 @@ Dependency-driven, most user-visible first:
 3. ~~**A2** Scenario control~~ — **done**
 4. ~~**A3** Settings + audit verification~~ — **done**
 5. ~~**A8** map snapshot button~~ — **done**
-6. **A5/A6** RTI and passive radar entry points ← *next*
-7. **B4** foreground-service permission ordering
-8. **B3** VPN mutual-exclusion guard
-9. **A7** LLM assistant UI
+6. ~~**A5** RTI entry point~~ — **done**
+7. ~~**B4** foreground-service permission ordering~~ — **done**
+8. ~~**B3** VPN mutual-exclusion guard~~ — **done**
+9. **A6** passive radar — deferred, needs an RTL-SDR on real hardware
+10. **A7** LLM assistant UI ← *next*
 
 Each step: implement → extend the static gates where the failure would
 otherwise be silent → run all gates → commit → push.

@@ -57,6 +57,25 @@ class GatekeeperVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (running.get()) return START_STICKY
+
+        // VpnService is single-instance per device, not per app: if another
+        // tunnel (WireGuard, a corporate VPN) already holds it, prepare()
+        // returns an intent asking for consent, and establishing here would
+        // silently tear their tunnel down. On a deployment that reaches the
+        // command post over WireGuard that means cutting the link the
+        // operator depends on, so refuse instead.
+        val consent = runCatching { prepare(this) }.getOrNull()
+        if (consent != null) {
+            Log.w(TAG, "VPN consent not granted, or another tunnel is active")
+            audit.append(
+                "gatekeeper", "vpn.refused",
+                JSONObject().put("reason", "consent required or tunnel in use"),
+                Severity.WARNING,
+            )
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         if (!establish()) {
             stopSelf()
             return START_NOT_STICKY

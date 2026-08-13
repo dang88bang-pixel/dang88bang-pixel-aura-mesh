@@ -1,15 +1,21 @@
 package com.aura.agent.fusion
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
+
 import com.aura.agent.security.CausalValidator
 import com.aura.agent.security.Severity
 import com.aura.agent.sensors.BleScanner
@@ -19,6 +25,9 @@ import com.aura.agent.sensors.MmwaveManager
 import com.aura.agent.sensors.UsbSerialTransport
 import com.aura.agent.sensors.UwbManager
 import com.aura.agent.sensors.VitalsEstimator
+import com.aura.agent.rti.NativeRti
+import com.aura.agent.rti.RtiNode
+import com.aura.agent.rti.RtiTarget
 import com.aura.agent.storage.LocalVectorStore
 import com.aura.agent.storage.Transform3D
 import kotlinx.coroutines.CoroutineScope
@@ -39,6 +48,11 @@ private const val TAG = "AuraFusion"
 private const val UWB_RATE_HZ = 20f
 private const val VITALS_WINDOW = 1200          // 60 s at 20 Hz
 private const val VITALS_INTERVAL_MS = 2000L    // re-estimate every 2 s
+
+/** RTI grid margin, cadence and size ceiling. */
+private const val RTI_MARGIN_M = 1.0f
+private const val RTI_INTERVAL_MS = 500L
+private const val RTI_MAX_VOXELS = 20000
 private const val CHANNEL_ID = "aura_fusion"
 private const val NOTIFICATION_ID = 4711
 
@@ -80,6 +94,20 @@ class SensorFusionService : Service() {
     val uwbAnchors = mutableMapOf<String, FloatArray>()
 
     /**
+     * Radio-tomographic imaging over the BLE token mesh, when one is surveyed.
+     *
+     * RTI needs the node positions to be known: it solves for attenuation on
+     * each link, so a node whose location is wrong corrupts every link it
+     * takes part in. It stays null until [configureRti] is called with a
+     * surveyed layout — guessing positions from RSSI and then imaging with
+     * them would produce a confident picture of nothing.
+     */
+    private var rti: NativeRti? = null
+    private val _rtiTargets = MutableStateFlow<List<RtiTarget>>(emptyList())
+    val rtiTargets: StateFlow<List<RtiTarget>> = _rtiTargets.asStateFlow()
+    private var lastRtiAt = 0L
+
+    /**
      * Rolling CIR amplitude history for the vitals estimator.
      *
      * 60 s at the UWB update rate. Breathing at 6/min needs ~30 s to resolve
@@ -98,6 +126,54 @@ class SensorFusionService : Service() {
      * the allocator for no benefit, and the point cloud view already knows how
      * to decimate.
      */
+    /**
+     * Enable RTI over a surveyed set of BLE nodes.
+     *
+     * @param nodes surveyed positions, at least 3
+     * @param resolution voxel size in metres
+     */
+    fun configureRti(nodes: List<RtiNode>, resolution: Float = 0.25f): Boolean {
+        if (nodes.size < 3) {
+            Log.w(TAG, "RTI needs at least 3 nodes, got ${'$'}{nodes.size}")
+            return false
+        }
+        rti?.close()
+        val minX = nodes.minOf { it.x } - RTI_MARGIN_M
+        val minY = nodes.minOf { it.y } - RTI_MARGIN_M
+        val spanX = nodes.maxOf { it.x } + RTI_MARGIN_M - minX
+        val spanY = nodes.maxOf { it.y } + RTI_MARGIN_M - minY
+        val nx = kotlin.math.ceil(spanX / resolution).toInt().coerceAtLeast(1)
+        val ny = kotlin.math.ceil(spanY / resolution).toInt().coerceAtLeast(1)
+        if (nx * ny > RTI_MAX_VOXELS) {
+            // The solver is O(links x voxels) per FISTA iteration; an
+            // unbounded grid stalls the fusion loop rather than failing.
+            Log.w(TAG, "RTI grid ${'$'}nx x ${'$'}ny exceeds ${'$'}RTI_MAX_VOXELS voxels")
+            return false
+        }
+        rti = NativeRti(nodes, minX, minY, resolution, nx, ny)
+        audit.append(
+            "rti", "configured",
+            JSONObject().put("nodes", nodes.size).put("voxels", nx * ny),
+            Severity.NOTICE,
+        )
+        return true
+    }
+
+    /** Feed reciprocal link RSSI; calibrates first, then images. */
+    fun onRtiSample(linkRssi: Map<Pair<String, String>, Float>) {
+        val engine = rti ?: return
+        val now = System.currentTimeMillis()
+        if (now - lastRtiAt < RTI_INTERVAL_MS) return
+        lastRtiAt = now
+
+        if (!engine.isCalibrated) {
+            engine.calibrate(linkRssi)
+            return
+        }
+        val image = engine.reconstruct(linkRssi) ?: return
+        _rtiTargets.value = engine.extractTargets(image)
+    }
+
     /** Storage diagnostics for the settings tab; null before the service starts. */
     fun storeStats(): JSONObject? =
         if (::store.isInitialized) runCatching { store.stats() }.getOrNull() else null
@@ -124,12 +200,65 @@ class SensorFusionService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(NOTIFICATION_ID, buildNotification("Sensorfusion aktiv"))
+        if (!enterForeground()) {
+            // Without the runtime permissions behind the declared service
+            // types, Android 14 throws instead of starting us. Stopping
+            // cleanly and saying why beats being killed mid-survey with a
+            // SecurityException the operator never sees.
+            audit.append(
+                "service", "fusion.foreground_denied",
+                JSONObject().put("reason", "missing runtime permission"),
+                Severity.WARNING,
+            )
+            stopSelf()
+            return START_NOT_STICKY
+        }
         startPipeline()
         // START_STICKY: if the OS kills us under memory pressure mid-survey we
         // want to come back and keep recording rather than lose the session.
         return START_STICKY
     }
+
+    /**
+     * Enter the foreground with only the service types we may legally claim.
+     *
+     * On API 34 the declared `foregroundServiceType` is enforced at
+     * `startForeground` time: claiming `location` without ACCESS_FINE_LOCATION
+     * granted is an immediate SecurityException, not a downgrade. The type is
+     * therefore assembled from what has actually been granted, so a survey
+     * with BLE but no location permission still runs.
+     */
+    private fun enterForeground(): Boolean {
+        val notification = buildNotification("Sensorfusion aktiv")
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                var types = 0
+                if (hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) {
+                    types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                }
+                val btOk = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                    hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                if (btOk) {
+                    types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                }
+                if (types == 0) return false
+                ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, types)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            true
+        } catch (e: SecurityException) {
+            Log.e(TAG, "startForeground rejected: ${'$'}{e.message}")
+            false
+        } catch (e: IllegalStateException) {
+            // Thrown when started from the background outside an allowed slot.
+            Log.e(TAG, "startForeground not permitted right now: ${'$'}{e.message}")
+            false
+        }
+    }
+
+    private fun hasPermission(name: String): Boolean =
+        ContextCompat.checkSelfPermission(this, name) == PackageManager.PERMISSION_GRANTED
 
     /**
      * Attach whatever is plugged into the USB-C port.
@@ -371,6 +500,8 @@ class SensorFusionService : Service() {
         lidar?.stop()
         mmwave?.stop()
         uwb?.stop()
+        rti?.close()
+        rti = null
         scope.cancel()
         ekf.close()
         store.close()
