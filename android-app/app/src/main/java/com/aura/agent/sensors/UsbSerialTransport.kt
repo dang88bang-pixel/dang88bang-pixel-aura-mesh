@@ -44,7 +44,17 @@ private const val ACTION_USB_PERMISSION = "com.aura.agent.USB_PERMISSION"
  */
 class UsbSerialTransport(
     private val context: Context,
-    private val vendorId: Int = 0,
+    /**
+     * Accepted USB vendor IDs, tried in order. A set rather than a single ID
+     * because the same sensor ships with different bridge chips depending on
+     * board revision - the IWR6843ISK uses a SiLabs CP2105 on Rev C/D and a TI
+     * XDS110 on earlier boards. Matching only one silently fails to detect
+     * half the hardware in the field.
+     *
+     * Empty means "first serial device found", which is right when only one
+     * accessory is attached.
+     */
+    private val vendorIds: Set<Int> = emptySet(),
     private val productId: Int = 0,
     private val baudRate: Int = 115200,
     private val portIndex: Int = 0,
@@ -124,11 +134,9 @@ class UsbSerialTransport(
     private fun findDriver(manager: UsbManager): UsbSerialDriver? {
         val drivers = UsbSerialProber.getDefaultProber().findAllDrivers(manager)
         if (drivers.isEmpty()) return null
-        // vendorId == 0 means "first serial device we can find", which is the
-        // right default when only one accessory is plugged in.
-        if (vendorId == 0) return drivers.first()
+        if (vendorIds.isEmpty()) return drivers.first()
         return drivers.firstOrNull {
-            it.device.vendorId == vendorId &&
+            it.device.vendorId in vendorIds &&
                 (productId == 0 || it.device.productId == productId)
         }
     }
@@ -215,28 +223,48 @@ class UsbSerialTransport(
     }
 
     companion object {
-        // USB IDs matching res/xml/usb_device_filter.xml
-        const val VID_SILICON_LABS = 0x10C4   // CP210x - RPLIDAR A1/A2
-        const val PID_CP2102 = 0xEA60
-        const val VID_FTDI = 0x0403           // FT232 - RPLIDAR S2, DWM3000
-        const val VID_TI = 0x0451             // XDS110 - IWR6843
-        const val VID_REALTEK = 0x0BDA        // RTL2838 - RTL-SDR
+        // USB vendor IDs. Verified against the USB-IF registry
+        // (usb-ids.gowdy.us, 2026-08-13); see docs/source_claims.md.
+        /** Silicon Labs - CP210x family (CP2102 single, CP2105 dual UART). */
+        const val VID_SILICON_LABS = 0x10C4
+        /** Future Technology Devices International - FT232, FT2232. */
+        const val VID_FTDI = 0x0403
+        /** Texas Instruments - XDS110 debug probe. */
+        const val VID_TI = 0x0451
+        /** Realtek - RTL2832U/RTL2838 (RTL-SDR). */
+        const val VID_REALTEK = 0x0BDA
 
-        /** RPLIDAR: 115200 for A1/A2, 256000 for S2. */
-        fun forLidar(context: Context, baud: Int = 115200) =
-            UsbSerialTransport(context, VID_SILICON_LABS, 0, baud)
+        const val PID_CP2102 = 0xEA60         // CP210x UART Bridge
+        const val PID_CP2105 = 0xEA70         // CP2105 Dual UART Bridge
+        const val PID_FT232 = 0x6001          // FT232 Serial (UART) IC
+        const val PID_XDS110 = 0xBEF3         // XDS110, exposes 2 UARTs
 
         /**
-         * IWR6843: port 0 is the CLI UART, port 1 the DATA UART.
-         * Configuration goes to the CLI; TLV frames arrive on DATA.
+         * RPLIDAR: A1/A2 use a CP2102 at 115200; the S2 uses an FTDI bridge at
+         * 256000. Both vendors are accepted so either model is detected.
+         */
+        fun forLidar(context: Context, baud: Int = 115200) =
+            UsbSerialTransport(context, setOf(VID_SILICON_LABS, VID_FTDI), 0, baud)
+
+        /**
+         * IWR6843: port 0 is the CLI UART (configuration), port 1 the DATA
+         * UART (TLV frames).
+         *
+         * Both bridge chips are accepted. TI's own guidance is that Rev C/D
+         * IWR6843ISK boards carry a **SiLabs CP2105** ("Enhanced COM Port" =
+         * CLI, "Standard COM Port" = data) while earlier boards use the
+         * **XDS110** ("Application/User UART" and "Auxiliary Data Port").
+         * Accepting only one leaves half the boards undetected, which presents
+         * as a sensor that is simply never found.
          */
         fun forMmwaveCli(context: Context) =
-            UsbSerialTransport(context, VID_TI, 0, 115200, portIndex = 0)
+            UsbSerialTransport(context, setOf(VID_TI, VID_SILICON_LABS), 0, 115200, portIndex = 0)
 
         fun forMmwaveData(context: Context) =
-            UsbSerialTransport(context, VID_TI, 0, 921600, portIndex = 1)
+            UsbSerialTransport(context, setOf(VID_TI, VID_SILICON_LABS), 0, 921600, portIndex = 1)
 
+        /** DWM3000 evaluation boards ship with an FTDI bridge. */
         fun forUwb(context: Context) =
-            UsbSerialTransport(context, VID_FTDI, 0, 115200)
+            UsbSerialTransport(context, setOf(VID_FTDI), 0, 115200)
     }
 }

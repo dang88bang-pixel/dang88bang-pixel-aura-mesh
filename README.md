@@ -78,7 +78,7 @@ Every figure below comes from a test in this repository.
 
 **And what does not:** passive radar range resolution is **62 m** with an
 RTL-SDR, not the < 10 m in the original spec (`c/2B` is not negotiable), and
-Phi-3-mini runs at **3–6 t/s** on a 4 GB QCS4290, not > 10. Both are analysed
+Phi-3-mini runs at **3–6 t/s** on the QCS4290, not > 10. Both are analysed
 in [`docs/performance_targets.md`](docs/performance_targets.md), which also
 lists the eight bugs the test suite caught.
 

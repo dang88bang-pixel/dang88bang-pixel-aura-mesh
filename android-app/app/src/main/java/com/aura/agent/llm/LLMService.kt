@@ -14,7 +14,7 @@ private const val TAG = "AuraLLM"
  * Offline assistant: Phi-3-mini (GGUF, Q4_K_M) via llama.cpp + a local RAG
  * store, so the device answers questions about a survey with no network.
  *
- * Reality check on the CT45P-X0N (Snapdragon QCS4290, 4 GB RAM):
+ * Reality check on the CT45P-X0N (Snapdragon QCS4290, 6 GB RAM):
  *
  * | model            | quant  | file   | RAM   | tokens/s |
  * |------------------|--------|--------|-------|----------|
@@ -23,9 +23,11 @@ private const val TAG = "AuraLLM"
  * | Qwen2.5 1.5B     | Q4_K_M | 1.0 GB | ~1.3G | 10-16    |
  *
  * The often-quoted ">10 t/s for Phi-3" figure comes from 8-core flagship SoCs
- * with much higher memory bandwidth. On a 4 GB device Phi-3 also competes with
- * the sensor pipeline for RAM, so **Qwen2.5-1.5B-Instruct is the default** and
- * Phi-3 is opt-in. See `docs/performance_targets.md`.
+ * with much higher memory bandwidth. Decode on a quantised model is bound by
+ * bandwidth rather than capacity, so the 6 GB of the CT45P XP does not rescue
+ * Phi-3's latency: 3-6 t/s is about reading speed. **Qwen2.5-1.5B-Instruct is
+ * the default** on latency grounds; Phi-3 is a supported opt-in, and on 6 GB
+ * it does fit alongside the sensor pipeline. See `docs/performance_targets.md`.
  */
 class LLMService(private val context: Context) {
 
@@ -152,7 +154,7 @@ class LLMService(private val context: Context) {
     private external fun nativeFree(handle: Long)
 
     companion object {
-        /** Small enough to coexist with the sensor pipeline on a 4 GB device. */
+        /** Fast enough for interactive use on a QCS4290; ~1.3 GB resident. */
         const val DEFAULT_MODEL = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
         const val PHI3_MODEL = "phi-3-mini-4k-instruct-q4_k_m.gguf"
 

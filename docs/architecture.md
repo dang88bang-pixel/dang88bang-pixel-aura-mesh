@@ -7,7 +7,7 @@ environment around a Honeywell CT45P-X0N handheld:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ CT45P-X0N  (Android 11, QCS4290, 4 GB)                               │
+│ CT45P-X0N  (Android 11, QCS4290, 6 GB)                               │
 │                                                                       │
 │  Kotlin layer                                                         │
 │    sensors/   LiDAR · mmWave · BLE · IMU · UWB drivers               │

@@ -94,10 +94,21 @@ the difference between a usable range-Doppler map and a solid wall of noise.
 
 ---
 
-## 4. Offline LLM on a 4 GB device
+## 4. Offline LLM on the CT45P-X0N
 
-The CT45P-X0N has a Snapdragon QCS4290 and 4 GB of RAM. Measured community
-figures for llama.cpp on this class of SoC:
+**Corrected 2026-08-13.** This section previously assumed 4 GB of RAM. That was
+wrong, and the error came from conflating two models in the same family:
+
+| model | RAM |
+|---|---|
+| CT45 (`CT45-L0N`, `CT45-L1N`) | 4 GB DDR4x |
+| **CT45 XP (`CT45P-X0N`, `CT45P-L1N`)** | **6 GB DDR4x** |
+
+The `P` in `CT45P-X0N` denotes the XP variant. Honeywell's configuration guide
+lists `CT45P-X0N-38D100G` as "CT45XP, WLAN, **6GB**/64GB … USB 3.0 Type C OTG".
+The target device therefore has 6 GB, not 4 GB.
+
+Measured community figures for llama.cpp on this class of SoC (QCS4290):
 
 | Model | Quant | File | Peak RAM | Tokens/s |
 |---|---|---|---|---|
@@ -106,14 +117,23 @@ figures for llama.cpp on this class of SoC:
 | Qwen2.5 1.5B-Instruct | Q4_K_M | 1.0 GB | ~1.3 GB | **10–16** |
 | Gemma 2 2B | Q4_K_M | 1.6 GB | ~1.9 GB | 7–11 |
 
-The ">10 t/s with Phi-3" figure in the source material comes from flagship
-8-core SoCs with roughly twice the memory bandwidth. On the CT45P, Phi-3 also
-has to coexist with the sensor pipeline, the occupancy grid and a WebView —
-2.8 GB of model on a 4 GB device means the OS will start killing things.
+**What the correction changes.** The original argument against Phi-3 had two
+legs, and one of them has now fallen over:
 
-**Decision:** `LLMService.DEFAULT_MODEL` is Qwen2.5-1.5B-Instruct Q4_K_M.
-Phi-3 remains available via `LLMService.PHI3_MODEL` for devices with more RAM.
-Both are opt-in downloads — a 2.4 GB asset has no business inside the APK.
+- *Memory pressure* — "2.8 GB on a 4 GB device means the OS starts killing
+  things". On 6 GB this is much weaker. Phi-3-mini is genuinely viable
+  alongside the sensor pipeline, and calling it unusable would be wrong.
+- *Throughput* — the ">10 t/s with Phi-3" figure in the source material comes
+  from flagship 8-core SoCs with roughly twice the memory bandwidth. Decode
+  speed on a quantised model is bandwidth-bound, not capacity-bound, so **this
+  leg is unaffected by the RAM correction.** 3–6 t/s is roughly reading speed:
+  usable for a short answer, painful for anything longer.
+
+**Decision (unchanged, for a narrower reason):** `LLMService.DEFAULT_MODEL`
+stays Qwen2.5-1.5B-Instruct Q4_K_M, now purely on latency rather than on RAM.
+`LLMService.PHI3_MODEL` is a supported choice on this device rather than a
+concession to hypothetical larger hardware. Both remain opt-in downloads — a
+2.4 GB asset has no business inside the APK.
 
 ---
 

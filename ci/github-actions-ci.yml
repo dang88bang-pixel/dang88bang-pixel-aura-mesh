@@ -119,6 +119,9 @@ jobs:
       - name: Every third-party import must resolve to a fetchable dependency
         run: |
           python3 tools/check-android-deps.py
+      - name: USB ids must be registry-valid and consistent with the code
+        run: |
+          python3 tools/check-usb-ids.py
 
   visualizer:
     name: Web visualiser (Node)
