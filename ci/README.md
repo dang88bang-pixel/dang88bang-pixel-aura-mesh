@@ -18,8 +18,10 @@ remote:
   workflow `.github/workflows/...` without `workflows` permission
 ```
 
-This was re-tested on 2026-08-13 and still applies. **Activating them is the
-one step that has to be done by a human**, and it takes about ten seconds.
+This was last confirmed on 2026-08-13. A later session may have the
+permission; activating them is still the one step that can be rejected by
+the remote, and it takes about ten seconds. The copies in `ci/` stay so a
+rejected push does not lose the definitions.
 
 ## Activation
 

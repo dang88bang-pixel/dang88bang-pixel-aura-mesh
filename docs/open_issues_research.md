@@ -173,7 +173,7 @@ All four are fixed. What each turned into:
 | item | why |
 |---|---|
 | **A6** passive radar unreachable | needs an RTL-SDR on the USB port; wiring it blind adds an untestable path |
-| **A7** LLM assistant UI | needs a GGUF model on-device |
+| ~~**A7** LLM assistant UI~~ | **done** — constructed, Settings call site, model still side-loaded |
 | **C1** no Android compile here | no SDK, no route to `dl.google.com`. `ci/github-actions-apk.yml` is the fix, and it needs one manual activation step |
 | **C2** Kotlin coverage is partial | anything touching `Context` needs an emulator; only pure logic is host-testable |
 | DWM3000 hardware verification | the protocol is now specified, but no board has ever been connected |

@@ -147,6 +147,28 @@ if [[ ! -f "$BUILD/out-vitals/VitalsEstimatorTestKt.class" ]]; then
   exit 1
 fi
 
+echo "==> compiling the vector-store suite"
+mkdir -p "$BUILD/out-llm"
+compile "$BUILD/out-llm" \
+  "$APP/main/java/com/aura/agent/llm/VectorStore.kt" \
+  "$APP/test/kotlin/VectorStoreTest.kt"
+
+if [[ ! -f "$BUILD/out-llm/VectorStoreTestKt.class" ]]; then
+  echo "error: vector-store suite produced no test class" >&2
+  exit 1
+fi
+
+echo "==> compiling the LiDAR baud suite"
+mkdir -p "$BUILD/out-lidar"
+compile "$BUILD/out-lidar" \
+  "$APP/main/java/com/aura/agent/sensors/LidarBaud.kt" \
+  "$APP/test/kotlin/LidarBaudTest.kt"
+
+if [[ ! -f "$BUILD/out-lidar/LidarBaudTestKt.class" ]]; then
+  echo "error: LiDAR baud suite produced no test class" >&2
+  exit 1
+fi
+
 echo "==> running"
 STATUS=0
 "$JAVA" -cp "$BUILD/out:${KOTLIN_STDLIB:-}" AuditChainTestKt || STATUS=1
@@ -154,6 +176,8 @@ STATUS=0
 "$JAVA" -cp "$BUILD/out-vitals:${KOTLIN_STDLIB:-}" VitalsEstimatorTestKt || STATUS=1
 "$JAVA" -cp "$BUILD/out-quality:${KOTLIN_STDLIB:-}" PositionQualityTestKt || STATUS=1
 "$JAVA" -cp "$BUILD/out-geo:${KOTLIN_STDLIB:-}" GeoAnchorMathTestKt || STATUS=1
+"$JAVA" -cp "$BUILD/out-llm:${KOTLIN_STDLIB:-}" VectorStoreTestKt || STATUS=1
+"$JAVA" -cp "$BUILD/out-lidar:${KOTLIN_STDLIB:-}" LidarBaudTestKt || STATUS=1
 
 if [[ $STATUS -ne 0 ]]; then
   echo

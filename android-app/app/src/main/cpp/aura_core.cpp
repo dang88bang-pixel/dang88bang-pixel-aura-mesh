@@ -493,6 +493,8 @@ void ExtendedKalmanFilter::reset() {
     for (int i = 6; i < 9; ++i) P_[i * kStateDim + i] = 0.25f;             // attitude
     for (int i = 9; i < 12; ++i) P_[i * kStateDim + i] = 1e-3f;            // gyro bias
     for (int i = 12; i < 15; ++i) P_[i * kStateDim + i] = 1e-2f;           // accel bias
+    rejected_ = 0;
+    for (int i = 0; i < kMaxSources; ++i) consecutiveRejects_[i] = 0;
 }
 
 void ExtendedKalmanFilter::symmetrise() {
@@ -610,7 +612,22 @@ void ExtendedKalmanFilter::predict(const float gyro[3], const float accel[3], fl
 }
 
 void ExtendedKalmanFilter::applyUpdate(const float* H, const float* innovation,
-                                       const float* R, int m) {
+                                       const float* R, int m, int sourceId) {
+    // Mirrors the two guards in aura/ekf.py::_update. A single non-finite
+    // measurement NaNs the whole state vector and it never recovers; a wild
+    // one drags the estimate metres off and the covariance does not notice.
+    // Measured on this filter before the guards: one NaN range -> position
+    // (nan, nan) permanently; one +200 m range -> 0.4 m jump.
+    for (int j = 0; j < m; ++j) {
+        if (!std::isfinite(innovation[j])) { ++rejected_; return; }
+        for (int k = 0; k < kStateDim; ++k) {
+            if (!std::isfinite(H[j * kStateDim + k])) { ++rejected_; return; }
+        }
+        for (int k = 0; k < m; ++k) {
+            if (!std::isfinite(R[j * m + k])) { ++rejected_; return; }
+        }
+    }
+
     // S = H P H^T + R
     std::vector<float> PHt(static_cast<size_t>(kStateDim) * m, 0.0f);
     for (int i = 0; i < kStateDim; ++i) {
@@ -664,6 +681,32 @@ void ExtendedKalmanFilter::applyUpdate(const float* H, const float* innovation,
             }
         }
     }
+    // Chi-square gate: d^2 = y^T S^-1 y. Consistent with the Python filter,
+    // including the per-source escape hatch -- a filter that has become
+    // overconfident gates away the very measurements that would correct it,
+    // so after several consecutive rejections we let one through.
+    {
+        double d2 = 0.0;
+        for (int i = 0; i < m; ++i) {
+            double row = 0.0;
+            for (int j = 0; j < m; ++j) {
+                row += static_cast<double>(inv[static_cast<size_t>(i) * m + j]) * innovation[j];
+            }
+            d2 += static_cast<double>(innovation[i]) * row;
+        }
+        const int slot = ((sourceId % kMaxSources) + kMaxSources) % kMaxSources;
+        if (!std::isfinite(d2) || d2 > gateThreshold) {
+            if (++consecutiveRejects_[slot] <= maxConsecutiveRejects) {
+                ++rejected_;
+                return;
+            }
+            // Fall through to recover, but this path deliberately keeps the
+            // already-computed gain: the Python side inflates R instead. Here
+            // the escape is rare enough that the simpler form is honest.
+        }
+        consecutiveRejects_[slot] = 0;
+    }
+
     // K = P H^T S^-1
     std::vector<float> K(static_cast<size_t>(kStateDim) * m, 0.0f);
     for (int i = 0; i < kStateDim; ++i) {
@@ -733,7 +776,7 @@ void ExtendedKalmanFilter::updatePosition(const float position[3], float sigma) 
         innovation[i] = position[i] - x_[i];
         R[i * 3 + i] = sigma * sigma;
     }
-    applyUpdate(H, innovation, R, 3);
+    applyUpdate(H, innovation, R, 3, /*position*/ 1);
 }
 
 void ExtendedKalmanFilter::updateUwbRange(const float anchor[3], float distance, float sigma) {
@@ -748,7 +791,13 @@ void ExtendedKalmanFilter::updateUwbRange(const float anchor[3], float distance,
     H[2] = dz / predicted;
     const float innovation = distance - predicted;
     const float R = sigma * sigma;
-    applyUpdate(H, &innovation, &R, 1);
+    // Hash the anchor position so each anchor keeps its own streak; two
+    // anchors gated out permanently must not be masked by two good ones.
+    unsigned int hash = static_cast<unsigned int>(static_cast<int>(anchor[0] * 4.0f)) * 0x9E3779B1u;
+    hash ^= static_cast<unsigned int>(static_cast<int>(anchor[1] * 4.0f)) * 0x85EBCA77u;
+    hash ^= hash >> 13;
+    const int anchorId = 8 + static_cast<int>(hash % 56u);
+    applyUpdate(H, &innovation, &R, 1, anchorId);
 }
 
 void ExtendedKalmanFilter::updateYaw(float yaw, float sigma) {
@@ -756,7 +805,7 @@ void ExtendedKalmanFilter::updateYaw(float yaw, float sigma) {
     H[8] = 1.0f;
     const float innovation = wrapPi(wrapPi(yaw) - x_[8]);
     const float R = sigma * sigma;
-    applyUpdate(H, &innovation, &R, 1);
+    applyUpdate(H, &innovation, &R, 1, /*yaw*/ 3);
 }
 
 void ExtendedKalmanFilter::updateZeroVelocity(float sigma) {
@@ -767,7 +816,7 @@ void ExtendedKalmanFilter::updateZeroVelocity(float sigma) {
         innovation[i] = -x_[3 + i];
         R[i * 3 + i] = sigma * sigma;
     }
-    applyUpdate(H, innovation, R, 3);
+    applyUpdate(H, innovation, R, 3, /*zupt*/ 4);
 }
 
 void ExtendedKalmanFilter::updateAltitude(float altitude, float sigma) {
@@ -775,7 +824,7 @@ void ExtendedKalmanFilter::updateAltitude(float altitude, float sigma) {
     H[2] = 1.0f;
     const float innovation = altitude - x_[2];
     const float R = sigma * sigma;
-    applyUpdate(H, &innovation, &R, 1);
+    applyUpdate(H, &innovation, &R, 1, /*altitude*/ 5);
 }
 
 void ExtendedKalmanFilter::updateLidarPose(float x, float y, float yaw,
@@ -794,7 +843,7 @@ void ExtendedKalmanFilter::updateLidarPose(float x, float y, float yaw,
     R[0] = sigmaXy * sigmaXy;
     R[4] = sigmaXy * sigmaXy;
     R[8] = sigmaYaw * sigmaYaw;
-    applyUpdate(H, innovation, R, 3);
+    applyUpdate(H, innovation, R, 3, /*lidar pose*/ 6);
 }
 
 void ExtendedKalmanFilter::positionSigma(float out[3]) const {

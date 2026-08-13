@@ -10,6 +10,7 @@
 #include "../aura_core.h"
 
 #include <cmath>
+#include <limits>
 #include <cstdio>
 #include <cstdlib>
 #include <random>
@@ -370,6 +371,93 @@ void testVoxelCodec() {
 
 }  // namespace
 
+
+// ---------------------------------------------------------------------
+// Measurement gating (mirrors edge-agent/tests/test_ekf_gating.py)
+// ---------------------------------------------------------------------
+void testEkfGating() {
+    std::printf("\n== EKF measurement gating ==\n");
+
+    const float anchors[4][3] = {{0.f, 0.f, 2.4f}, {12.f, 0.f, 2.4f},
+                                 {12.f, 9.f, 2.4f}, {0.f, 9.f, 2.4f}};
+    const float truth[3] = {6.f, 4.f, 1.4f};
+    auto trueRange = [&](int i) {
+        float d = 0.f;
+        for (int k = 0; k < 3; ++k) { const float t = truth[k] - anchors[i][k]; d += t * t; }
+        return std::sqrt(d);
+    };
+    // predict() between update batches, as the real loop does. Without it the
+    // covariance collapses and almost everything looks surprising -- 665 of
+    // 800 updates gated, against 160 with prediction. Worth remembering: a
+    // gate tuned on update-only sequences would be tuned on a fiction.
+    auto converge = [&](aura::ExtendedKalmanFilter& ekf, int iterations) {
+        const float gyro[3] = {0.f, 0.f, 0.f};
+        const float accel[3] = {0.f, 0.f, 9.81f};
+        for (int it = 0; it < iterations; ++it) {
+            ekf.predict(gyro, accel, 0.1f);
+            for (int i = 0; i < 4; ++i) ekf.updateUwbRange(anchors[i], trueRange(i), 0.05f);
+        }
+    };
+
+    // Cold start must still converge: an over-eager gate locks the filter out
+    // of the very measurements that would correct it.
+    {
+        aura::ExtendedKalmanFilter ekf;
+        converge(ekf, 200);
+        checkNear(ekf.state()[0], 6.0f, 0.15f, "gated filter still converges in x");
+        checkNear(ekf.state()[1], 4.0f, 0.15f, "gated filter still converges in y");
+        check(ekf.rejected() < 400, "healthy run is not gated into starvation");
+    }
+
+    // A single non-finite range used to NaN the whole state, permanently.
+    {
+        aura::ExtendedKalmanFilter ekf;
+        converge(ekf, 100);
+        const float bx = ekf.state()[0], by = ekf.state()[1];
+        ekf.updateUwbRange(anchors[0], std::numeric_limits<float>::quiet_NaN(), 0.05f);
+        check(std::isfinite(ekf.state()[0]), "NaN range leaves x finite");
+        check(std::isfinite(ekf.state()[1]), "NaN range leaves y finite");
+        checkNear(ekf.state()[0], bx, 1e-4f, "NaN range does not move x");
+        checkNear(ekf.state()[1], by, 1e-4f, "NaN range does not move y");
+
+        ekf.updateUwbRange(anchors[0], std::numeric_limits<float>::infinity(), 0.05f);
+        check(std::isfinite(ekf.state()[0]), "inf range leaves x finite");
+        ekf.updateUwbRange(anchors[0], trueRange(0), std::numeric_limits<float>::quiet_NaN());
+        check(std::isfinite(ekf.state()[0]), "NaN sigma leaves x finite");
+        check(ekf.rejected() >= 3, "non-finite updates are counted");
+    }
+
+    // A wild outlier must not drag the estimate.
+    {
+        aura::ExtendedKalmanFilter ekf;
+        converge(ekf, 200);
+        const float bx = ekf.state()[0], by = ekf.state()[1];
+        ekf.updateUwbRange(anchors[0], trueRange(0) + 200.0f, 0.05f);
+        checkNear(ekf.state()[0], bx, 0.01f, "+200 m outlier does not move x");
+        checkNear(ekf.state()[1], by, 0.01f, "+200 m outlier does not move y");
+        check(ekf.rejected() >= 1, "outlier is counted as rejected");
+    }
+
+    // Honest measurements still get through after an outlier.
+    {
+        aura::ExtendedKalmanFilter ekf;
+        converge(ekf, 100);
+        ekf.updateUwbRange(anchors[0], trueRange(0) + 500.0f, 0.05f);
+        converge(ekf, 50);
+        checkNear(ekf.state()[0], 6.0f, 0.2f, "filter recovers after an outlier");
+    }
+
+    // reset() must clear the counters, or a fresh run inherits old streaks.
+    {
+        aura::ExtendedKalmanFilter ekf;
+        converge(ekf, 20);
+        ekf.updateUwbRange(anchors[0], std::numeric_limits<float>::quiet_NaN(), 0.05f);
+        check(ekf.rejected() > 0, "rejection recorded before reset");
+        ekf.reset();
+        check(ekf.rejected() == 0, "reset clears the rejection counter");
+    }
+}
+
 int main() {
     std::printf("AURA 6.0 native core test suite\n");
     testLinearAlgebra();
@@ -378,6 +466,7 @@ int main() {
     testFft();
     testPassiveRadar();
     testEkf();
+    testEkfGating();
     testVoxelCodec();
 
     std::printf("\n----------------------------------------\n");

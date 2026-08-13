@@ -81,5 +81,54 @@
             android:textColor="@color/aura_text_dim"
             android:textSize="12sp"
             tools:text="aura-core 6.0.0 (NEON)" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/settings_llm_heading"
+            android:textColor="@color/aura_text"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/llm_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/aura_text_dim"
+            android:textSize="12sp"
+            tools:text="Modell nicht geladen" />
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="@string/settings_llm_hint">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/llm_question"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:imeOptions="actionSend"
+                android:inputType="text"
+                android:maxLines="3" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/llm_ask"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/settings_llm_ask" />
+
+        <TextView
+            android:id="@+id/llm_answer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textColor="@color/aura_text"
+            android:textSize="13sp"
+            tools:text="Antwort erscheint hier." />
     </LinearLayout>
 </ScrollView>
