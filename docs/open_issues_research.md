@@ -8,7 +8,7 @@ Ordered by consequence, not by effort.
 
 ---
 
-## 1. The position estimate can be catastrophically wrong and still look fine — **CRITICAL**
+## 1. ~~The position estimate can be catastrophically wrong and still look fine~~ — **FIXED** (`420fc9e`)
 
 ### What was measured
 
@@ -93,7 +93,7 @@ nothing above it.
 
 ---
 
-## 2. The DWM3000 wire protocol is invented — **HIGH**
+## 2. ~~The DWM3000 wire protocol is invented~~ — **FIXED**
 
 `$INIT` / `$RANGE` / `$STOP` and the reply
 `ANCHOR-A=3.214,ANCHOR-B=7.882;CIR=0.42,1.87` appear in both
@@ -122,7 +122,7 @@ and record the alternative (speak UCI to stock firmware) with its cost.
 
 ---
 
-## 3. `armeabi-v7a` is built but cannot be reached — **MEDIUM**
+## 3. ~~`armeabi-v7a` is built but cannot be reached~~ — **FIXED**
 
 `abiFilters = ["arm64-v8a", "armeabi-v7a"]`, yet `minSdk = 30` and the CT45P is
 arm64. Every 32-bit device that could load the v7a slice is excluded by the SDK
@@ -134,7 +134,7 @@ planned. Otherwise it is cost with no benefit.
 
 ---
 
-## 4. `pipeline._iterations` and `store._conn` — **LOW**
+## 4. ~~`pipeline._iterations` and `store._conn`~~ — **FIXED**
 
 `api.py:231` and `api.py:295` reach into private members across a module
 boundary. Both are one-line accessor additions. Known debt, harmless today,
@@ -157,11 +157,23 @@ Worth recording, because each was a plausible failure that turned out fine.
 
 ---
 
-## Priority
+## Status
 
-1. **§1 uncertainty reporting** — a confidently wrong position on a rescue map
-   is the one failure here that could get somebody hurt.
-2. **§2 protocol honesty** — cheap, and prevents someone buying hardware that
-   cannot work.
-3. **§3 ABI** — build cost only.
-4. **§4 encapsulation** — cosmetic.
+All four are fixed. What each turned into:
+
+| § | fix |
+|---|---|
+| 1 | graded `quality` tiers (`good`/`degraded`/`poor`/`lost`) plus `seconds_since_aiding`, in Python, Kotlin and the visualiser, with a generated cross-platform fixture so the three cannot disagree |
+| 2 | renamed to the **Aura anchor protocol** and specified in `docs/uwb_anchor_protocol.md`, stating plainly that stock firmware does not speak it |
+| 3 | `abiFilters` reduced to `arm64-v8a` |
+| 4 | `FusionPipeline.iterations` and `LocalVectorStore.connection` accessors |
+
+## Still open, deliberately
+
+| item | why |
+|---|---|
+| **A6** passive radar unreachable | needs an RTL-SDR on the USB port; wiring it blind adds an untestable path |
+| **A7** LLM assistant UI | needs a GGUF model on-device |
+| **C1** no Android compile here | no SDK, no route to `dl.google.com`. `ci/github-actions-apk.yml` is the fix, and it needs one manual activation step |
+| **C2** Kotlin coverage is partial | anything touching `Context` needs an emulator; only pure logic is host-testable |
+| DWM3000 hardware verification | the protocol is now specified, but no board has ever been connected |

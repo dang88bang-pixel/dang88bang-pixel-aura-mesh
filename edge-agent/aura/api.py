@@ -228,7 +228,7 @@ def create_app(config: AgentConfig | None = None, autostart: bool = True) -> Fas
     store = LocalVectorStore(cfg.resolved_db_path(), cfg.project)
     pipeline = FusionPipeline(cfg, store)
     hub = ConnectionHub()
-    audit = AuditStore(store._conn)
+    audit = AuditStore(store.connection)
     voxels = VoxelWorld(voxel_size=0.10)
     rti_state: dict[str, Any] = {"processor": None}
 
@@ -292,7 +292,7 @@ def create_app(config: AgentConfig | None = None, autostart: bool = True) -> Fas
             "version": API_VERSION,
             "uptime": round(time.time() - app.state.started_at, 1),
             "simulate": cfg.simulate,
-            "iterations": pipeline._iterations,
+            "iterations": pipeline.iterations,
             "clients": len(hub.connections),
             "sensors": {k: v["healthy"] for k, v in sensors.items()},
         }

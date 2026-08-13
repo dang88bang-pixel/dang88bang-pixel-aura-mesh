@@ -217,6 +217,17 @@ class UwbManager(
     }
 
     companion object {
+        // The **Aura anchor protocol** - ours, not Qorvo's.
+        //
+        // Stock DWM3001CDK firmware speaks a CLI/UCI console over USB CDC
+        // whose command set is defined by that firmware; there is no $RANGE
+        // in it and no published wire standard for one. Checked against
+        // Qorvo's documentation and forum, 2026-08-13.
+        //
+        // So this will not talk to an off-the-shelf board. The anchor must run
+        // firmware implementing this protocol; see docs/uwb_anchor_protocol.md.
+        // Labelled explicitly because calling it "the DWM3000 shell format"
+        // invites someone to buy hardware that cannot work.
         private val CMD_INIT = "\$INIT\r\n".toByteArray()
         private val CMD_RANGE = "\$RANGE\r\n".toByteArray()
         private val CMD_STOP = "\$STOP\r\n".toByteArray()

@@ -30,12 +30,16 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags += listOf("-std=c++17", "-O3", "-fno-exceptions", "-fno-rtti")
-                // The CT45P is arm64; armeabi-v7a is kept for older accessories.
-                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+                // arm64 only. The CT45P-X0N is arm64, and minSdk 30 excludes
+                // every 32-bit device that could load an armeabi-v7a slice, so
+                // building it doubled native build time and APK size for a
+                // library nothing can load. Re-add if a 32-bit accessory is
+                // ever actually targeted.
+                abiFilters += listOf("arm64-v8a")
             }
         }
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            abiFilters += listOf("arm64-v8a")
         }
     }
 

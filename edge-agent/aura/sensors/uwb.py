@@ -131,7 +131,9 @@ class UwbDriver(SensorDriver):
         ranges: dict[str, float] = {}
         amplitude = 0.0
         phase = 0.0
-        # Expected DWM3000 shell format: "ANCHOR-A=3.214,ANCHOR-B=7.882;CIR=0.42,1.87"
+        # Aura anchor protocol (ours, not Qorvo's - stock DWM3001CDK firmware
+        # does not speak it; see docs/uwb_anchor_protocol.md):
+        #   "ANCHOR-A=3.214,ANCHOR-B=7.882;CIR=0.42,1.87"
         head, _, cir = text.partition(";")
         for token in head.split(","):
             if "=" not in token:

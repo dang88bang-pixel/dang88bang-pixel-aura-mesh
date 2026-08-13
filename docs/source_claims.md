@@ -92,9 +92,9 @@ of acceptable vendor ids and the filter declares both bridges.
 
 | claim | value | status |
 |---|---|---|
-| DWM3000 shell commands | `$INIT`, `$RANGE`, `$STOP` (CRLF) | **NEEDS SOURCE** |
-| DWM3000 range reply | `ANCHOR-A=3.214,ANCHOR-B=7.882;CIR=0.42,1.87` | **NEEDS SOURCE** — mirrored in both the Python driver and `UwbGeometry.parseLine`, so a change touches two places |
-| NLOS marker | trailing `*` on a range | **NEEDS SOURCE** |
+| ~~DWM3000 shell commands~~ | `$INIT`, `$RANGE`, `$STOP` (CRLF) | **RESOLVED — it is ours.** Qorvo publishes no ASCII ranging protocol; stock DWM3001CDK firmware runs a CLI/UCI app over USB CDC with no `$RANGE`. Now documented as the **Aura anchor protocol** in `docs/uwb_anchor_protocol.md` and requires custom anchor firmware. |
+| ~~DWM3000 range reply~~ | `ANCHOR-A=3.214,ANCHOR-B=7.882;CIR=0.42,1.87` | **RESOLVED — ours.** Specified in `docs/uwb_anchor_protocol.md`; implemented identically in the Python driver and `UwbGeometry.parseLine`. Still unverified against real firmware. |
+| ~~NLOS marker~~ | trailing `*` on a range | **RESOLVED — ours.** Same document. |
 | RPLIDAR parser resyncs one byte at a time | — | **PHYSICS** — required by the sync-byte framing; verified by test |
 
 ## Performance figures

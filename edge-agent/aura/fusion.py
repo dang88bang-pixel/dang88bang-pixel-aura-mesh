@@ -284,6 +284,11 @@ class FusionPipeline:
             self._pose_initialized = True
             self.diagnostics.note("pose_bootstrap")
 
+    @property
+    def iterations(self) -> int:
+        """Completed fusion cycles. Public so the API need not reach inside."""
+        return self._iterations
+
     def tick(self) -> dict:
         """One full fusion iteration (also callable synchronously in tests)."""
         now = time.time()

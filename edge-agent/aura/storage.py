@@ -145,6 +145,16 @@ class LocalVectorStore:
         self.writes = 0
 
     # ------------------------------------------------------------------
+    @property
+    def connection(self):
+        """The underlying SQLite connection.
+
+        Exposed so collaborators sharing this database (the audit store) need
+        not reach for a private attribute. Deliberately read-only: the store
+        still owns the connection's lifetime and closes it.
+        """
+        return self._conn
+
     def close(self) -> None:
         with self._lock:
             try:
