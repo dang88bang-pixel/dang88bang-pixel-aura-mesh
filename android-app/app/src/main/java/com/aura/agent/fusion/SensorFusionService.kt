@@ -18,6 +18,7 @@ import com.aura.agent.sensors.LidarManager
 import com.aura.agent.sensors.MmwaveManager
 import com.aura.agent.sensors.UsbSerialTransport
 import com.aura.agent.sensors.UwbManager
+import com.aura.agent.sensors.VitalsEstimator
 import com.aura.agent.storage.LocalVectorStore
 import com.aura.agent.storage.Transform3D
 import kotlinx.coroutines.CoroutineScope
@@ -33,6 +34,11 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 private const val TAG = "AuraFusion"
+
+/** UWB reporting rate, and the window the vitals estimator runs over. */
+private const val UWB_RATE_HZ = 20f
+private const val VITALS_WINDOW = 1200          // 60 s at 20 Hz
+private const val VITALS_INTERVAL_MS = 2000L    // re-estimate every 2 s
 private const val CHANNEL_ID = "aura_fusion"
 private const val NOTIFICATION_ID = 4711
 
@@ -72,6 +78,29 @@ class SensorFusionService : Service() {
 
     /** Surveyed UWB anchor positions; empty until the site is configured. */
     val uwbAnchors = mutableMapOf<String, FloatArray>()
+
+    /**
+     * Rolling CIR amplitude history for the vitals estimator.
+     *
+     * 60 s at the UWB update rate. Breathing at 6/min needs ~30 s to resolve
+     * at all, and the estimator's frequency resolution is 1/T, so a shorter
+     * window cannot distinguish 12 from 14 breaths per minute.
+     */
+    private val cirHistory = ArrayDeque<Float>()
+    private var lastVitalsAt = 0L
+
+    /**
+     * Read-only accessors for the UI.
+     *
+     * The fragments observe these flows directly rather than having every
+     * sample mirrored into [FusionState]. A LiDAR sweep is ~720 points at
+     * 10 Hz; copying that through a state object on every frame would churn
+     * the allocator for no benefit, and the point cloud view already knows how
+     * to decimate.
+     */
+    val lidarScans: SharedFlow<LidarScan>? get() = lidar?.scans
+    val bleBeacons: StateFlow<Map<String, BleBeacon>> get() = ble.beacons
+    val uwbReadings: SharedFlow<UwbReading>? get() = uwb?.readings
 
     inner class LocalBinder : Binder() {
         fun service(): SensorFusionService = this@SensorFusionService
@@ -195,9 +224,24 @@ class SensorFusionService : Service() {
                 reading.ranges.forEach { (anchorId, distance) ->
                     onUwbRange(anchorId, distance, reading.lineOfSight[anchorId] ?: true)
                 }
+                // Vitals come from the CIR amplitude series, not from range.
+                cirHistory.addLast(reading.cirAmplitude)
+                while (cirHistory.size > VITALS_WINDOW) cirHistory.removeFirst()
+
+                var vitals: VitalsEstimator.Vitals? = null
+                val now = System.currentTimeMillis()
+                if (cirHistory.size >= VitalsEstimator.MIN_SAMPLES &&
+                    now - lastVitalsAt >= VITALS_INTERVAL_MS
+                ) {
+                    lastVitalsAt = now
+                    vitals = VitalsEstimator.estimate(cirHistory.toFloatArray(), UWB_RATE_HZ)
+                }
+
                 _state.value = _state.value.copy(
                     uwbAnchorsInView = reading.ranges.size,
                     cirAmplitude = reading.cirAmplitude,
+                    respirationBpm = vitals?.respirationBpm ?: _state.value.respirationBpm,
+                    heartRateBpm = vitals?.heartRateBpm ?: _state.value.heartRateBpm,
                 )
             }
         }
@@ -358,6 +402,10 @@ data class FusionState(
     val lastScanAt: Long = 0,
     val uwbAnchorsInView: Int = 0,
     val cirAmplitude: Float = 0f,
+    /** Respiration rate in breaths/min, or null when not observable. */
+    val respirationBpm: Float? = null,
+    /** Estimated heart rate in bpm, or null. Lower confidence than breathing. */
+    val heartRateBpm: Float? = null,
     val mmwaveTargets: Int = 0,
     val movingTargets: Int = 0,
     val running: Boolean = false,

@@ -105,10 +105,22 @@ if [[ ! -f "$BUILD/out-uwb/UwbGeometryTestKt.class" ]]; then
   exit 1
 fi
 
+echo "==> compiling the vitals suite"
+mkdir -p "$BUILD/out-vitals"
+compile "$BUILD/out-vitals" \
+  "$APP/main/java/com/aura/agent/sensors/VitalsEstimator.kt" \
+  "$APP/test/kotlin/VitalsEstimatorTest.kt"
+
+if [[ ! -f "$BUILD/out-vitals/VitalsEstimatorTestKt.class" ]]; then
+  echo "error: vitals suite produced no test class" >&2
+  exit 1
+fi
+
 echo "==> running"
 STATUS=0
 "$JAVA" -cp "$BUILD/out:${KOTLIN_STDLIB:-}" AuditChainTestKt || STATUS=1
 "$JAVA" -cp "$BUILD/out-uwb:${KOTLIN_STDLIB:-}" UwbGeometryTestKt || STATUS=1
+"$JAVA" -cp "$BUILD/out-vitals:${KOTLIN_STDLIB:-}" VitalsEstimatorTestKt || STATUS=1
 
 if [[ $STATUS -ne 0 ]]; then
   echo

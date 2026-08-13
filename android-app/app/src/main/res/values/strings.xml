@@ -39,4 +39,12 @@
     <string name="audit_invalid">Audit-Kette manipuliert bei Index %1$d</string>
 
     <string name="permission_required">Berechtigungen erforderlich für Sensorbetrieb</string>
+    <!-- Live view -->
+    <string name="live_pose">x=%1$.2f  y=%2$.2f  z=%3$.2f   yaw=%4$.2f rad</string>
+    <string name="live_waiting">Warte auf Sensordaten…</string>
+    <string name="live_vitals_full">Durch-Wand: Atmung %1$.0f/min · Puls %2$.0f/min</string>
+    <string name="live_vitals_resp">Durch-Wand: Atmung %1$.0f/min · Puls nicht auswertbar</string>
+    <string name="live_vitals_none">Durch-Wand: keine Vitalzeichen erkannt</string>
+    <string name="live_vitals_no_uwb">Durch-Wand: kein UWB-Sensor verbunden</string>
+    <string name="live_device_status">%1$d Zyklen · %2$d LiDAR-Punkte · %3$d UWB-Anker · %4$d mmWave-Ziele · EKF %5$s</string>
 </resources>

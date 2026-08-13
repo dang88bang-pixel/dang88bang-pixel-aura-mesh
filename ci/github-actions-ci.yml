@@ -122,6 +122,9 @@ jobs:
       - name: USB ids must be registry-valid and consistent with the code
         run: |
           python3 tools/check-usb-ids.py
+      - name: getString arguments must match the format specifiers
+        run: |
+          python3 tools/check-string-formats.py
 
   visualizer:
     name: Web visualiser (Node)

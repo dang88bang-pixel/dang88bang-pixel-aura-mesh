@@ -21,6 +21,7 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
+import android.widget.LinearLayout
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.viewpager2.adapter.FragmentStateAdapter
@@ -30,6 +31,7 @@ import com.aura.agent.BuildConfig
 import com.aura.agent.R
 import com.aura.agent.fusion.FusionState
 import com.aura.agent.fusion.SensorFusionService
+import com.aura.agent.sensors.BleBeacon
 import com.aura.agent.security.Severity
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
@@ -50,11 +52,25 @@ class MainActivity : AppCompatActivity() {
     private var service: SensorFusionService? = null
     private var bound = false
 
+    /**
+     * The bound service, for fragments.
+     *
+     * Fragments are created by the pager before the service connects, so this
+     * is nullable by nature and every caller must handle null rather than
+     * assume ordering.
+     */
+    val fusionService: SensorFusionService? get() = service
+
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             service = (binder as? SensorFusionService.LocalBinder)?.service()
             bound = true
             observeFusion()
+            // Fragments that were created before the connection landed have
+            // nothing to observe yet; let them start now.
+            supportFragmentManager.fragments.forEach {
+                (it as? ServiceAware)?.onServiceReady()
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -177,10 +193,148 @@ class MainActivity : AppCompatActivity() {
 }
 
 /** Live sensor readouts: attitude, point count, RSSI bars, vitals. */
-class LiveViewFragment : Fragment() {
+/** Implemented by fragments that need the service once it binds. */
+interface ServiceAware {
+    fun onServiceReady()
+}
+
+/**
+ * Live sensor view: attitude, LiDAR sweep, BLE tokens, vitals, device health.
+ *
+ * Observes the service's flows directly rather than going through the REST
+ * API. On-device data has no reason to make a network round trip, and the tab
+ * has to keep working when the edge agent is unreachable — which, underground
+ * or inside a concrete structure, is the normal case.
+ */
+class LiveViewFragment : Fragment(), ServiceAware {
+
+    private var attitude: AttitudeView? = null
+    private var pointCloud: PointCloudView? = null
+    private var poseText: TextView? = null
+    private var vitalsText: TextView? = null
+    private var deviceStatus: TextView? = null
+    private var rssiContainer: LinearLayout? = null
+    private val rssiBars = mutableMapOf<String, RssiBarView>()
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?,
-    ): View = inflater.inflate(R.layout.fragment_live, container, false)
+    ): View {
+        val view = inflater.inflate(R.layout.fragment_live, container, false)
+        attitude = view.findViewById(R.id.attitude_view)
+        pointCloud = view.findViewById(R.id.point_cloud_view)
+        poseText = view.findViewById(R.id.pose_text)
+        vitalsText = view.findViewById(R.id.vitals_text)
+        deviceStatus = view.findViewById(R.id.device_status)
+        rssiContainer = view.findViewById(R.id.rssi_container)
+        return view
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        observe()
+    }
+
+    override fun onServiceReady() = observe()
+
+    private fun observe() {
+        val fusion = (activity as? MainActivity)?.fusionService ?: return
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                fusion.state.collect { render(it) }
+            }
+        }
+
+        // The sweep is not mirrored through FusionState: 720 points at 10 Hz
+        // would churn the allocator for no benefit.
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                fusion.lidarScans?.collect { scan ->
+                    pointCloud?.updateScan(scan.angles, scan.distances)
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                fusion.bleBeacons.collect { renderBeacons(it) }
+            }
+        }
+    }
+
+    private fun render(state: FusionState) {
+        val snapshot = state.ekf
+        if (snapshot != null) {
+            attitude?.update(snapshot.attitude[0], snapshot.attitude[1], snapshot.attitude[2])
+            poseText?.text = getString(
+                R.string.live_pose,
+                snapshot.position[0], snapshot.position[1], snapshot.position[2],
+                snapshot.attitude[2],
+            )
+        } else {
+            poseText?.setText(R.string.live_waiting)
+        }
+
+        // Say "not observable" rather than showing a stale or invented number:
+        // an absent reading and a zero reading mean very different things when
+        // the question is whether someone behind a wall is breathing.
+        val resp = state.respirationBpm
+        vitalsText?.text = when {
+            resp != null && state.heartRateBpm != null ->
+                getString(R.string.live_vitals_full, resp, state.heartRateBpm)
+            resp != null -> getString(R.string.live_vitals_resp, resp)
+            state.uwbAnchorsInView > 0 -> getString(R.string.live_vitals_none)
+            else -> getString(R.string.live_vitals_no_uwb)
+        }
+
+        deviceStatus?.text = getString(
+            R.string.live_device_status,
+            state.iterations,
+            state.lidarPoints,
+            state.uwbAnchorsInView,
+            state.mmwaveTargets,
+            if (snapshot?.converged == true) "OK" else "…",
+        )
+    }
+
+    private fun renderBeacons(beacons: Map<String, BleBeacon>) {
+        val container = rssiContainer ?: return
+        // Strongest first, and capped: a busy site can present dozens of
+        // tokens and an unbounded list makes the tab unusable.
+        val visible = beacons.values.sortedByDescending { it.rssi }.take(MAX_RSSI_BARS)
+
+        visible.forEach { beacon ->
+            val bar = rssiBars.getOrPut(beacon.address) {
+                RssiBarView(requireContext()).also {
+                    it.layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, RSSI_BAR_HEIGHT_DP.dp(),
+                    )
+                    container.addView(it)
+                }
+            }
+            bar.update(beacon.name.ifBlank { beacon.address }, beacon.rssi)
+        }
+
+        // Drop bars for tokens that have gone away.
+        val live = visible.map { it.address }.toSet()
+        rssiBars.keys.filterNot { it in live }.forEach { gone ->
+            rssiBars.remove(gone)?.let(container::removeView)
+        }
+    }
+
+    private fun Int.dp(): Int = (this * resources.displayMetrics.density).toInt()
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        attitude = null; pointCloud = null; poseText = null
+        vitalsText = null; deviceStatus = null; rssiContainer = null
+        rssiBars.clear()
+    }
+
+    companion object {
+        private const val MAX_RSSI_BARS = 8
+        private const val RSSI_BAR_HEIGHT_DP = 34
+    }
 }
 
 /**
