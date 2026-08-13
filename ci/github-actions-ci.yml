@@ -116,20 +116,9 @@ jobs:
             fi
           done
           exit $fail
-      - name: Every androidx/material import must have a declared dependency
+      - name: Every third-party import must resolve to a fetchable dependency
         run: |
-          set -e
-          cd android-app
-          fail=0
-          for pkg in $(grep -rhoE '^import (androidx|com\.google\.android\.material)[A-Za-z0-9._]*' \
-                       app/src/main/java | sed 's/^import //' | cut -d. -f1-3 | sort -u); do
-            group=$(echo "$pkg" | cut -d. -f1-2)
-            artifact=$(echo "$pkg" | cut -d. -f3)
-            if ! grep -qE "\"$group[.:]" app/build.gradle.kts; then
-              echo "NO DEPENDENCY for import $pkg"; fail=1
-            fi
-          done
-          exit $fail
+          python3 tools/check-android-deps.py
 
   visualizer:
     name: Web visualiser (Node)

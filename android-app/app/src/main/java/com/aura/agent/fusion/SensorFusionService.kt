@@ -16,6 +16,8 @@ import com.aura.agent.sensors.BleScanner
 import com.aura.agent.sensors.ImuManager
 import com.aura.agent.sensors.LidarManager
 import com.aura.agent.sensors.MmwaveManager
+import com.aura.agent.sensors.UsbSerialTransport
+import com.aura.agent.sensors.UwbManager
 import com.aura.agent.storage.LocalVectorStore
 import com.aura.agent.storage.Transform3D
 import kotlinx.coroutines.CoroutineScope
@@ -57,6 +59,7 @@ class SensorFusionService : Service() {
 
     private var lidar: LidarManager? = null
     private var mmwave: MmwaveManager? = null
+    private var uwb: UwbManager? = null
 
     private val _state = MutableStateFlow(FusionState())
     val state: StateFlow<FusionState> = _state.asStateFlow()
@@ -64,6 +67,7 @@ class SensorFusionService : Service() {
     private var iterations = 0L
     private var lastPredictAt = 0L
     private var lastPersistAt = 0L
+    private var lastVoxelWriteAt = 0L
     private var deviceHeight = 1.4f
 
     /** Surveyed UWB anchor positions; empty until the site is configured. */
@@ -94,9 +98,50 @@ class SensorFusionService : Service() {
         return START_STICKY
     }
 
+    /**
+     * Attach whatever is plugged into the USB-C port.
+     *
+     * Every sensor is optional: a CT45P with nothing attached still runs the
+     * IMU + BLE pipeline and produces a usable (if coarser) track. Missing
+     * hardware must never stop the service - a survey that silently fails to
+     * start is worse than one that starts degraded and says so.
+     */
+    private fun attachUsbSensors() {
+        val lidarTransport = UsbSerialTransport.forLidar(applicationContext)
+        if (lidarTransport.open() == UsbSerialTransport.OpenResult.OPENED) {
+            lidar = LidarManager(lidarTransport, scope)
+            audit.append("sensor", "lidar.attached",
+                JSONObject().put("device", lidarTransport.deviceName), Severity.NOTICE)
+        } else {
+            Log.i(TAG, "no LiDAR: ${'$'}{lidarTransport.lastError}")
+        }
+
+        val mmwaveTransport = UsbSerialTransport.forMmwaveData(applicationContext)
+        if (mmwaveTransport.open() == UsbSerialTransport.OpenResult.OPENED) {
+            mmwave = MmwaveManager(mmwaveTransport, scope)
+            audit.append("sensor", "mmwave.attached",
+                JSONObject().put("device", mmwaveTransport.deviceName), Severity.NOTICE)
+        } else {
+            Log.i(TAG, "no mmWave: ${'$'}{mmwaveTransport.lastError}")
+        }
+
+        val uwbTransport = UsbSerialTransport.forUwb(applicationContext)
+        val manager = UwbManager(applicationContext, uwbTransport, scope)
+        uwbAnchors.forEach { (id, p) -> manager.addAnchor(id, p[0], p[1], p[2]) }
+        when (manager.start()) {
+            UwbManager.Backend.NONE -> Log.i(TAG, "no UWB backend")
+            else -> {
+                uwb = manager
+                audit.append("sensor", "uwb.attached",
+                    JSONObject().put("backend", manager.backend.name), Severity.NOTICE)
+            }
+        }
+    }
+
     private fun startPipeline() {
         imu.start()
         ble.start()
+        attachUsbSensors()
         lidar?.start()
         mmwave?.start()
         audit.append("service", "fusion.start", severity = Severity.SECURITY)
@@ -119,16 +164,49 @@ class SensorFusionService : Service() {
             }
         }
 
-        // --- LiDAR scan matching --------------------------------------
+        // --- LiDAR: map integration -----------------------------------
         scope.launch {
             lidar?.scans?.collect { scan ->
                 val snapshot = ekf.snapshot()
-                // A full scan matcher runs natively; until a map exists the
-                // scan is only used for mapping, never for a pose update.
+                // The sweep is projected with the *current* pose estimate and
+                // folded into the voxel map. No pose update is derived from it
+                // here: a 2D scan match needs an existing map to register
+                // against, and registering against a map built from the same
+                // drifting pose just locks the error in (measured: 3.6 m in
+                // the Python pipeline before the UWB bootstrap was added).
+                val points = scan.toCartesian(
+                    snapshot.position[0], snapshot.position[1], snapshot.yaw,
+                )
+                voxelIngest(points, scan.timestamp)
                 _state.value = _state.value.copy(
                     lidarPoints = scan.size,
                     lastScanAt = scan.timestamp,
                 )
+            }
+        }
+
+        // --- UWB: ranging + through-wall CIR --------------------------
+        scope.launch {
+            uwb?.readings?.collect { reading ->
+                // Fuse every anchor. NLOS links are kept with an inflated
+                // sigma rather than discarded: with only 1-2 line-of-sight
+                // anchors the range-only geometry is underconstrained and the
+                // estimate slides along the unobservable direction.
+                reading.ranges.forEach { (anchorId, distance) ->
+                    onUwbRange(anchorId, distance, reading.lineOfSight[anchorId] ?: true)
+                }
+                _state.value = _state.value.copy(
+                    uwbAnchorsInView = reading.ranges.size,
+                    cirAmplitude = reading.cirAmplitude,
+                )
+            }
+        }
+
+        // --- mmWave: moving targets -----------------------------------
+        scope.launch {
+            mmwave?.targets?.collect { targets ->
+                val moving = targets.count { kotlin.math.abs(it.velocity) > 0.18f }
+                _state.value = _state.value.copy(mmwaveTargets = targets.size, movingTargets = moving)
             }
         }
 
@@ -191,6 +269,27 @@ class SensorFusionService : Service() {
         }
     }
 
+    /**
+     * Fold a projected sweep into the persistent voxel map.
+     *
+     * Chunks are written at most once per second: the RLE codec is cheap but
+     * SQLite writes are not, and at 10 sweeps/second the WAL would grow faster
+     * than the retention job trims it.
+     */
+    private fun voxelIngest(points: FloatArray, timestamp: Long) {
+        if (timestamp - lastVoxelWriteAt < 1000) return
+        lastVoxelWriteAt = timestamp
+        // Persisted as an event for now; the chunked writer lands with the
+        // native voxel codec wiring (see docs/android_build.md).
+        store.saveEvent(
+            "lidar",
+            JSONObject()
+                .put("points", points.size / 2)
+                .put("timestamp", timestamp / 1000.0),
+            timestamp,
+        )
+    }
+
     fun attachLidar(manager: LidarManager) { lidar = manager }
 
     fun attachMmwave(manager: MmwaveManager) { mmwave = manager }
@@ -223,6 +322,7 @@ class SensorFusionService : Service() {
         ble.stop()
         lidar?.stop()
         mmwave?.stop()
+        uwb?.stop()
         scope.cancel()
         ekf.close()
         store.close()
@@ -256,5 +356,9 @@ data class FusionState(
     val beacons: Int = 0,
     val lidarPoints: Int = 0,
     val lastScanAt: Long = 0,
+    val uwbAnchorsInView: Int = 0,
+    val cirAmplitude: Float = 0f,
+    val mmwaveTargets: Int = 0,
+    val movingTargets: Int = 0,
     val running: Boolean = false,
 )

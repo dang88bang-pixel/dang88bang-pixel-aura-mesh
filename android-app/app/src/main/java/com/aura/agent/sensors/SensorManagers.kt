@@ -10,8 +10,6 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.hardware.usb.UsbDevice
-import android.hardware.usb.UsbManager
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,8 +22,6 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.io.InputStream
-import java.io.OutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -127,69 +123,17 @@ data class SensorHealth(
  * Thin wrapper around a USB-serial device.
  *
  * The CT45P exposes USB-C host mode, which is how the LiDAR, the mmWave
- * front-end and the SDR attach. We keep the transport abstract so unit tests
- * can inject streams without any hardware.
+ * front-end and the SDR attach. Kept abstract so tests can inject a fake
+ * without hardware; the real implementation is [UsbSerialTransport].
+ *
+ * `read` returns the byte count, **0 on timeout** (a normal idle state, not an
+ * error) and -1 on failure.
  */
 interface SerialTransport {
     val isOpen: Boolean
     fun write(bytes: ByteArray)
     fun read(buffer: ByteArray, timeoutMs: Int): Int
     fun close()
-}
-
-class UsbSerialTransport(
-    private val context: Context,
-    private val vendorId: Int,
-    private val productId: Int,
-    private val baudRate: Int,
-) : SerialTransport {
-
-    private var input: InputStream? = null
-    private var output: OutputStream? = null
-    private var device: UsbDevice? = null
-
-    override val isOpen: Boolean get() = input != null
-
-    fun open(): Boolean {
-        val manager = context.getSystemService(Context.USB_SERVICE) as? UsbManager ?: return false
-        device = manager.deviceList.values.firstOrNull {
-            it.vendorId == vendorId && it.productId == productId
-        }
-        if (device == null) {
-            Log.w(TAG, "no USB device $vendorId:$productId attached")
-            return false
-        }
-        if (!manager.hasPermission(device)) {
-            Log.w(TAG, "USB permission not granted for ${device?.deviceName}")
-            return false
-        }
-        // Real wiring uses usb-serial-for-android (UsbSerialPort#open) here;
-        // the streams are assigned by the concrete driver implementation.
-        return true
-    }
-
-    override fun write(bytes: ByteArray) {
-        try {
-            output?.write(bytes)
-            output?.flush()
-        } catch (e: Exception) {
-            Log.e(TAG, "serial write failed", e)
-        }
-    }
-
-    override fun read(buffer: ByteArray, timeoutMs: Int): Int = try {
-        input?.read(buffer) ?: -1
-    } catch (e: Exception) {
-        Log.e(TAG, "serial read failed", e)
-        -1
-    }
-
-    override fun close() {
-        runCatching { input?.close() }
-        runCatching { output?.close() }
-        input = null
-        output = null
-    }
 }
 
 // ======================================================================

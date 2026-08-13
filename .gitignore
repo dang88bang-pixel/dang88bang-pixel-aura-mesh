@@ -46,3 +46,6 @@ aura_test_asan
 .idea/
 .vscode/
 .DS_Store
+
+# Host-side JVM/Kotlin toolchain fetched by tools/setup-kotlin-toolchain.sh
+.toolchain/

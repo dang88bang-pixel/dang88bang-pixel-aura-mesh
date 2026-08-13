@@ -81,7 +81,7 @@ mkdir -p "$BUILD/src" "$BUILD/out"
 sed -e "s/@DIGEST0@/$DIGEST0/g" -e "s/@DIGEST1@/$DIGEST1/g" \
     "$APP/test/kotlin/AuditChainTest.kt" > "$BUILD/src/AuditChainTest.kt"
 
-echo "==> compiling"
+echo "==> compiling the audit-chain suite"
 compile "$BUILD/out" \
   "$APP/test/shim/org/json/JsonShim.kt" \
   "$APP/main/java/com/aura/agent/security/CausalValidator.kt" \
@@ -92,5 +92,26 @@ if [[ ! -f "$BUILD/out/AuditChainTestKt.class" ]]; then
   exit 1
 fi
 
+# The UWB parser and trilateration solve are Android-free by construction
+# (see UwbGeometry's header), so they are compiled and run the same way.
+echo "==> compiling the UWB geometry suite"
+mkdir -p "$BUILD/out-uwb"
+compile "$BUILD/out-uwb" \
+  "$APP/main/java/com/aura/agent/sensors/UwbGeometry.kt" \
+  "$APP/test/kotlin/UwbGeometryTest.kt"
+
+if [[ ! -f "$BUILD/out-uwb/UwbGeometryTestKt.class" ]]; then
+  echo "error: UWB suite produced no test class" >&2
+  exit 1
+fi
+
 echo "==> running"
-"$JAVA" -cp "$BUILD/out:${KOTLIN_STDLIB:-}" AuditChainTestKt
+STATUS=0
+"$JAVA" -cp "$BUILD/out:${KOTLIN_STDLIB:-}" AuditChainTestKt || STATUS=1
+"$JAVA" -cp "$BUILD/out-uwb:${KOTLIN_STDLIB:-}" UwbGeometryTestKt || STATUS=1
+
+if [[ $STATUS -ne 0 ]]; then
+  echo
+  echo "FAILED: at least one Kotlin suite reported failures" >&2
+fi
+exit $STATUS

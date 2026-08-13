@@ -99,7 +99,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
     // USB serial for LiDAR / mmWave / SDR over the CT45P's USB-C host port
-    implementation("com.github.mik3y:usb-serial-for-android:3.7.0")
+    implementation("com.github.mik3y:usb-serial-for-android:3.11.0")
 
     // REST + WebSocket to the edge agent
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
@@ -107,8 +107,10 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
-    // UWB (Android 12+; guarded at runtime)
-    implementation("androidx.core.uwb:uwb:1.0.0-alpha08")
+    // NOTE: androidx.core.uwb is deliberately NOT declared. It requires
+    // API 31+, while the CT45P-X0N ships Android 11 (API 30) and has no UWB
+    // radio at all. UwbManager reaches the platform API reflectively for the
+    // rare newer device; the CT45P path is an external DWM3000 over USB-serial.
 
     // Encrypted preferences for the API token / WireGuard key material
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
