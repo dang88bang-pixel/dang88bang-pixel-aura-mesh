@@ -10,9 +10,13 @@ honest list of where problems are most likely to surface.
 | Layer | How | Result |
 |---|---|---|
 | Native core (`aura_core.cpp`) | `g++` on the host, plus ASan/UBSan | **618 assertions pass** |
-| `CausalValidator.kt` | `kotlinc` + host JVM (`tools/run-kotlin-tests.sh`) | **44 checks pass** |
+| Pure Kotlin logic (audit chain, UWB geometry, vitals) | `kotlinc` + host JVM (`tools/run-kotlin-tests.sh`) | **126 checks pass** |
 | Manifest ↔ classes/resources | static gates in CI (`android-static`) | clean |
-| Imports ↔ Gradle dependencies | static gate in CI | clean |
+| Imports ↔ Gradle dependencies | `tools/check-android-deps.py` | clean |
+| USB ids ↔ registry and code | `tools/check-usb-ids.py` | 7 ids valid |
+| `getString` ↔ format specifiers | `tools/check-string-formats.py` | clean |
+| Interactive views ↔ code | `tools/check-dead-ui.py` | 17 bound |
+| R8 keep rules ↔ JNI/inflated classes | `tools/check-proguard-rules.py` | 19 rules |
 | JNI symbols ↔ `external fun` | `tools/check-jni-symbols.py`, both directions | **28/28 matched** |
 | `aura_jni.cpp`, `llama_bridge.cpp` | compiled with g++ against a stub `jni.h` | build clean |
 
@@ -22,6 +26,28 @@ Anything that needs the SDK: resource compilation (AAPT2), the manifest merger,
 Kotlin against the real `android.jar`, JNI symbol linkage, and every class that
 touches `Context`, `SensorManager`, `BluetoothLeScanner`, `SQLiteOpenHelper`,
 `VpnService` or `WebView`.
+
+---
+
+## Fastest route: let GitHub build it
+
+No Android SDK required on your machine. `ci/github-actions-apk.yml` builds an
+installable APK on a GitHub runner, which has the SDK preinstalled and, unlike
+the environment this project was authored in, unrestricted network access.
+
+```bash
+mkdir -p .github/workflows
+git mv ci/github-actions-apk.yml .github/workflows/apk.yml
+git commit -m "ci: enable the APK build" && git push
+```
+
+Then **Actions → Build APK → Run workflow**, and download the
+`aura-agent-debug-apk` artifact. Full details, including release signing, in
+[`ci/README.md`](../ci/README.md).
+
+This has to be done by hand once: the GitHub App used for this branch lacks
+the `workflows` permission, so a commit that adds `.github/workflows/` is
+rejected by the remote.
 
 ---
 

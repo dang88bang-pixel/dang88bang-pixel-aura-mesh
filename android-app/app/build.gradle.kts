@@ -7,6 +7,16 @@ android {
     namespace = "com.aura.agent"
     compileSdk = 34
 
+    // Pinned deliberately: an unpinned NDK resolves to whatever the build
+    // machine happens to have, so a CI image bump silently changes the
+    // toolchain compiling the native core.
+    //
+    // r27 LTS, which is the default preinstalled on GitHub's ubuntu-24.04
+    // runners. NDK 26 was *removed* from those images in January 2026, so
+    // pinning the older LTS would break CI rather than stabilise it.
+    // Overridable for local builds that have a different NDK installed.
+    ndkVersion = System.getenv("AURA_NDK_VERSION") ?: "27.3.13750724"
+
     defaultConfig {
         applicationId = "com.aura.agent"
         // The CT45P-X0N ships Android 11; UWB APIs (Android 12+) are accessed
@@ -32,7 +42,9 @@ android {
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
+            // Matches what the runner images ship. Pinning 3.22.1 fails on a
+            // machine that only has 3.31, and CMakeLists only requires 3.22.
+            version = System.getenv("AURA_CMAKE_VERSION") ?: "3.31.5"
         }
     }
 

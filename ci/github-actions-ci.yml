@@ -128,6 +128,9 @@ jobs:
       - name: Interactive views must be wired to code
         run: |
           python3 tools/check-dead-ui.py
+      - name: R8 keep rules must cover the JNI and inflated classes
+        run: |
+          python3 tools/check-proguard-rules.py
 
   visualizer:
     name: Web visualiser (Node)
