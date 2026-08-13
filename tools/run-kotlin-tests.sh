@@ -125,6 +125,17 @@ if [[ ! -f "$BUILD/out-quality/PositionQualityTestKt.class" ]]; then
   exit 1
 fi
 
+echo "==> compiling the geo-anchor suite"
+mkdir -p "$BUILD/out-geo"
+compile "$BUILD/out-geo" \
+  "$APP/main/java/com/aura/agent/sensors/GeoAnchorMath.kt" \
+  "$APP/test/kotlin/GeoAnchorMathTest.kt"
+
+if [[ ! -f "$BUILD/out-geo/GeoAnchorMathTestKt.class" ]]; then
+  echo "error: geo-anchor suite produced no test class" >&2
+  exit 1
+fi
+
 echo "==> compiling the vitals suite"
 mkdir -p "$BUILD/out-vitals"
 compile "$BUILD/out-vitals" \
@@ -142,6 +153,7 @@ STATUS=0
 "$JAVA" -cp "$BUILD/out-uwb:${KOTLIN_STDLIB:-}" UwbGeometryTestKt || STATUS=1
 "$JAVA" -cp "$BUILD/out-vitals:${KOTLIN_STDLIB:-}" VitalsEstimatorTestKt || STATUS=1
 "$JAVA" -cp "$BUILD/out-quality:${KOTLIN_STDLIB:-}" PositionQualityTestKt || STATUS=1
+"$JAVA" -cp "$BUILD/out-geo:${KOTLIN_STDLIB:-}" GeoAnchorMathTestKt || STATUS=1
 
 if [[ $STATUS -ne 0 ]]; then
   echo

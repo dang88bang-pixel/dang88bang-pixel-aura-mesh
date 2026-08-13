@@ -73,6 +73,8 @@ Raw sensor/scenario events from the store.
 | `/api/v1/agent/export/json?limit=2000` | GET | full state + map + history |
 | `/api/v1/agent/export/cot?include_contacts=true` | GET | Cursor-on-Target XML for TAK. **409** unless `AURA_GEO_ANCHOR` is set — see `docs/tactical_integration_assessment.md` |
 | `/api/v1/agent/export/mesh?limit=200` | GET | compact binary frame for one LoRa packet (8+22n bytes). Same 409 rule as `export/cot` |
+| `/api/v1/agent/geo/anchor` | GET | current WGS84 anchor, or `configured:false` |
+| `/api/v1/agent/geo/anchor` | POST | set the anchor from a GNSS fix; `sigma_m` feeds every exported `ce` |
 
 ---
 

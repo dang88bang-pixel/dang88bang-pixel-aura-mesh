@@ -87,21 +87,35 @@ class GeoAnchor:
     :param yaw_deg: Bearing of the local +x axis, degrees clockwise from
         **true** north. 0 means local +x points north. Note that a magnetic
         compass reading needs declination applied before it goes here.
+    :param sigma_m: 1-sigma horizontal uncertainty of the anchor itself,
+        metres. **This dominates the exported accuracy.** The EKF may know its
+        position to 0.06 m relative to the origin, but if the origin was fixed
+        by a handheld GNSS fix good to 5 m, every absolute position we publish
+        is good to 5 m, not 0.06 m. Reporting the EKF sigma alone would
+        understate the error by ~80x and put a confidently-wrong marker on
+        someone's map. 0.0 means "surveyed point, error negligible".
+    :param source: How the anchor was obtained -- ``manual``, ``gnss`` or
+        ``surveyed``. Carried into the CoT ``how`` field and the remarks so a
+        consumer can tell a surveyed origin from a phone fix.
     """
 
     lat: float
     lon: float
     hae: float = 0.0
     yaw_deg: float = 0.0
+    sigma_m: float = 0.0
+    source: str = "manual"
 
     def __post_init__(self) -> None:
         if not (-90.0 <= self.lat <= 90.0):
             raise GeoAnchorError(f"latitude out of range: {self.lat}")
         if not (-180.0 <= self.lon <= 180.0):
             raise GeoAnchorError(f"longitude out of range: {self.lon}")
-        for name in ("lat", "lon", "hae", "yaw_deg"):
+        for name in ("lat", "lon", "hae", "yaw_deg", "sigma_m"):
             if not math.isfinite(getattr(self, name)):
                 raise GeoAnchorError(f"{name} is not finite")
+        if self.sigma_m < 0.0:
+            raise GeoAnchorError(f"anchor sigma cannot be negative: {self.sigma_m}")
 
     def to_wgs84(self, x: float, y: float, z: float = 0.0) -> tuple[float, float, float]:
         """Local metres -> lat, lon, hae.
@@ -142,14 +156,14 @@ class GeoAnchor:
 
     @classmethod
     def from_config(cls, value: str) -> "GeoAnchor":
-        """Parse ``"lat,lon[,hae[,yaw]]"`` -- the env-var form."""
+        """Parse ``"lat,lon[,hae[,yaw[,sigma_m]]]"`` -- the env-var form."""
         parts = [p.strip() for p in str(value).split(",") if p.strip()]
         if len(parts) < 2:
             raise GeoAnchorError(
                 f"geo anchor needs at least 'lat,lon', got {value!r}"
             )
         try:
-            nums = [float(p) for p in parts[:4]]
+            nums = [float(p) for p in parts[:5]]
         except ValueError as exc:
             raise GeoAnchorError(f"geo anchor not numeric: {value!r}") from exc
         return cls(*nums)
@@ -158,6 +172,22 @@ class GeoAnchor:
 def _iso(dt: datetime) -> str:
     """CoT timestamps are ISO 8601 UTC with a trailing Z."""
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _combine_sigma(relative: float | None, anchor_sigma: float) -> float | None:
+    """Total horizontal 1-sigma = EKF (relative to origin) (+) anchor error.
+
+    The two are independent, so they add in quadrature. This is the step that
+    keeps the export honest: the EKF may be certain to 0.06 m *relative to the
+    origin*, but if that origin came from a 5 m GNSS fix then the absolute
+    position is a 5 m position. Publishing 0.06 m would understate the error
+    by ~80x, and a tactical display would draw a confidently-wrong marker.
+    """
+    if relative is None or not math.isfinite(relative) or relative < 0:
+        return None
+    if not math.isfinite(anchor_sigma) or anchor_sigma <= 0:
+        return relative
+    return math.hypot(relative, anchor_sigma)
 
 
 def _sigma_to_ce(sigma: float | None) -> float:
@@ -269,7 +299,7 @@ class CotEncoder:
             uid=self.uid_for("self", "0"),
             cot_type=COT_TYPE_SELF,
             lat=lat, lon=lon, hae=hae,
-            ce=_sigma_to_ce(sigma),
+            ce=_sigma_to_ce(_combine_sigma(sigma, self.anchor.sigma_m)),
             # Vertical: 1-sigma -> ~95% is the 1D factor 1.96, not the
             # Rayleigh 2.4477 used for the 2D circular error above.
             le=(round(sigma_z * 1.96, 2)
@@ -278,11 +308,18 @@ class CotEncoder:
             how=HOW_MACHINE_GEO,
             callsign=self.callsign,
             stale_seconds=stale,
-            remarks=f"AURA fusion; quality={quality or 'unknown'}",
+            remarks=(
+                f"AURA fusion; quality={quality or 'unknown'}; "
+                f"anchor={self.anchor.source} +/-{self.anchor.sigma_m:.2f}m"
+            ),
             detail={
                 "__group": {"name": "Cyan", "role": "Team Member"},
                 "precisionlocation": {"geopointsrc": "CALC", "altsrc": "CALC"},
-                "aura": {"quality": str(quality or "unknown")},
+                "aura": {
+                    "quality": str(quality or "unknown"),
+                    "anchor_source": self.anchor.source,
+                    "anchor_sigma_m": f"{self.anchor.sigma_m:.2f}",
+                },
             },
         )
 
@@ -304,7 +341,9 @@ class CotEncoder:
 
             # Lower confidence -> larger reported error. A detection we are
             # 30% sure of must not arrive looking like a survey point.
-            ce = round(1.5 + 6.0 * (1.0 - min(max(confidence, 0.0), 1.0)), 2)
+            # Detection uncertainty, then the anchor error on top of it.
+            detection_sigma = 1.5 + 6.0 * (1.0 - min(max(confidence, 0.0), 1.0))
+            ce = round(math.hypot(detection_sigma, self.anchor.sigma_m), 2)
 
             events.append(CotEvent(
                 uid=self.uid_for("contact", track_id),

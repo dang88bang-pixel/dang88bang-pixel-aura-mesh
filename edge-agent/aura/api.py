@@ -93,6 +93,22 @@ class RtiNodeSpec(BaseModel):
     y: float
 
 
+class GeoAnchorRequest(BaseModel):
+    """Set the geo anchor at runtime, typically from a GNSS fix taken outdoors.
+
+    `sigma_m` is required rather than optional and defaults to a pessimistic
+    value: it dominates the accuracy of everything exported afterwards, so a
+    caller that omits it must not silently get "perfect".
+    """
+
+    lat: float = Field(ge=-90.0, le=90.0)
+    lon: float = Field(ge=-180.0, le=180.0)
+    hae: float = 0.0
+    yaw_deg: float = Field(default=0.0, ge=-360.0, le=360.0)
+    sigma_m: float = Field(default=10.0, ge=0.0, le=10000.0)
+    source: str = Field(default="gnss", pattern="^(manual|gnss|surveyed)$")
+
+
 class RtiConfigRequest(BaseModel):
     nodes: list[RtiNodeSpec]
     min_x: float = 0.0
@@ -233,6 +249,10 @@ def create_app(config: AgentConfig | None = None, autostart: bool = True) -> Fas
     audit = AuditStore(store.connection)
     voxels = VoxelWorld(voxel_size=0.10)
     rti_state: dict[str, Any] = {"processor": None}
+    # Runtime geo anchor. Overrides AURA_GEO_ANCHOR once set, so the operator
+    # can take a GNSS fix outdoors before entry instead of pre-configuring
+    # coordinates that are only known on site.
+    anchor_state: dict[str, Any] = {"anchor": None}
 
     app = FastAPI(
         title="Aura Edge Agent",
@@ -374,22 +394,79 @@ def create_app(config: AgentConfig | None = None, autostart: bool = True) -> Fas
         lat=0/lon=0 would put every contact in the Gulf of Guinea, and a
         tactical display would draw it without complaint.
         """
-        if not cfg.geo_anchor:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "no geo anchor configured; set GEO_ANCHOR='lat,lon[,hae[,yaw]]'. "
-                    "AURA's local frame has no position on Earth until you do."
-                ),
-            )
-        try:
-            anchor = GeoAnchor.from_config(cfg.geo_anchor)
-        except GeoAnchorError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        anchor = anchor_state["anchor"]
+        if anchor is None:
+            if not cfg.geo_anchor:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "no geo anchor; POST /api/v1/agent/geo/anchor with a GNSS fix "
+                        "or set AURA_GEO_ANCHOR='lat,lon[,hae[,yaw[,sigma_m]]]'. "
+                        "AURA's local frame has no position on Earth until you do."
+                    ),
+                )
+            try:
+                anchor = GeoAnchor.from_config(cfg.geo_anchor)
+            except GeoAnchorError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         encoder = CotEncoder(anchor, callsign=cfg.cot_callsign)
         people = [t.as_dict() for t in pipeline.people.tracks.values()] if include_contacts else []
         return encoder.events_for_state(pipeline.state(), people)
+
+    @app.post("/api/v1/agent/geo/anchor", tags=["map"], dependencies=auth)
+    def post_geo_anchor(request: GeoAnchorRequest) -> dict:
+        """Pin the local frame to WGS84, normally from a GNSS fix.
+
+        The intended flow is: stand outdoors where GNSS is good, POST the fix
+        with its reported accuracy, then walk in. `sigma_m` is carried into
+        every exported `ce` from that point on, so a 5 m fix produces 5 m
+        markers rather than the EKF's optimistic 0.06 m.
+        """
+        try:
+            anchor = GeoAnchor(
+                lat=request.lat, lon=request.lon, hae=request.hae,
+                yaw_deg=request.yaw_deg, sigma_m=request.sigma_m,
+                source=request.source,
+            )
+        except GeoAnchorError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        anchor_state["anchor"] = anchor
+        audit.append("geo", "geo.anchor",
+                     {"lat": round(anchor.lat, 7), "lon": round(anchor.lon, 7),
+                      "sigma_m": anchor.sigma_m, "source": anchor.source},
+                     "notice")
+        return {
+            "anchor": {
+                "lat": anchor.lat, "lon": anchor.lon, "hae": anchor.hae,
+                "yaw_deg": anchor.yaw_deg, "sigma_m": anchor.sigma_m,
+                "source": anchor.source,
+            },
+            "note": (
+                "anchor uncertainty is added in quadrature to every exported "
+                "position; it usually dominates the EKF term"
+            ),
+        }
+
+    @app.get("/api/v1/agent/geo/anchor", tags=["map"], dependencies=auth)
+    def get_geo_anchor() -> dict:
+        anchor = anchor_state["anchor"]
+        if anchor is None and cfg.geo_anchor:
+            try:
+                anchor = GeoAnchor.from_config(cfg.geo_anchor)
+            except GeoAnchorError:
+                anchor = None
+        if anchor is None:
+            return {"configured": False, "anchor": None}
+        return {
+            "configured": True,
+            "anchor": {
+                "lat": anchor.lat, "lon": anchor.lon, "hae": anchor.hae,
+                "yaw_deg": anchor.yaw_deg, "sigma_m": anchor.sigma_m,
+                "source": anchor.source,
+            },
+        }
 
     @app.get("/api/v1/agent/export/cot", tags=["map"], dependencies=auth)
     def get_cot(include_contacts: bool = Query(default=True)) -> Response:

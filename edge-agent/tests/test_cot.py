@@ -261,3 +261,58 @@ def test_single_event_is_emitted_bare_not_wrapped():
 def test_remarks_flag_detections_as_unverified():
     people = [{"track_id": "p1", "x": 1.0, "y": 1.0, "confidence": 0.5}]
     assert "unverified" in _encoder().person_events(people)[0].remarks
+
+
+# ----------------------------------------------------------------------
+# anchor uncertainty: the term that dominates the exported accuracy
+# ----------------------------------------------------------------------
+
+
+def test_anchor_uncertainty_reaches_the_exported_ce():
+    """Regression: a GNSS anchor must not export the EKF's optimistic sigma.
+
+    The EKF can be certain to 0.06 m *relative to the origin*. If that origin
+    came from a 5 m handheld fix, the absolute position is a 5 m position.
+    Publishing the EKF number alone understates the error by ~80x and puts a
+    confidently-wrong marker on a tactical display.
+    """
+    state = _state(sigma=0.25)
+    surveyed = CotEncoder(GeoAnchor(52.3759, 9.7320, sigma_m=0.0)).self_event(state)
+    handheld = CotEncoder(GeoAnchor(52.3759, 9.7320, sigma_m=5.0)).self_event(state)
+
+    assert handheld.ce > surveyed.ce
+    # 5 m anchor dominates a 0.25 m EKF sigma; expect ~5 m * 2.4477.
+    assert handheld.ce == pytest.approx(math.hypot(0.25, 5.0) * 2.4477, abs=0.05)
+
+
+def test_anchor_uncertainty_also_applies_to_contacts():
+    people = [{"track_id": "p1", "x": 1.0, "y": 1.0, "confidence": 0.9}]
+    near = CotEncoder(GeoAnchor(52.0, 9.0, sigma_m=0.0)).person_events(people)[0]
+    far = CotEncoder(GeoAnchor(52.0, 9.0, sigma_m=8.0)).person_events(people)[0]
+    assert far.ce > near.ce
+
+
+def test_anchor_source_is_visible_to_the_consumer():
+    """A surveyed origin and a phone fix must be distinguishable downstream."""
+    event = CotEncoder(
+        GeoAnchor(52.0, 9.0, sigma_m=3.0, source="gnss")
+    ).self_event(_state())
+    assert "gnss" in event.remarks
+    assert "3.00" in event.remarks
+    root = ET.fromstring(event.to_string())
+    aura = root.find("./detail/aura")
+    assert aura is not None
+    assert aura.get("anchor_source") == "gnss"
+    assert aura.get("anchor_sigma_m") == "3.00"
+
+
+def test_negative_anchor_sigma_is_rejected():
+    with pytest.raises(GeoAnchorError):
+        GeoAnchor(52.0, 9.0, sigma_m=-1.0)
+
+
+def test_config_string_carries_sigma():
+    anchor = GeoAnchor.from_config("52.3759,9.7320,55.0,0.0,4.5")
+    assert anchor.sigma_m == pytest.approx(4.5)
+    # Omitted -> 0.0, i.e. "surveyed"; documented and deliberate for the env form.
+    assert GeoAnchor.from_config("52.3759,9.7320").sigma_m == 0.0
