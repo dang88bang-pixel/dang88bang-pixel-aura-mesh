@@ -123,6 +123,7 @@ docs/
   performance_targets.md         measured vs specified, and why
   android_build.md               how to actually assemble the APK
   source_claims.md               every hardware constant, and how sure we are
+  3d_roadmap_assessment.md       proposed 3D features vs what the CT45P can run
   user_manual.md                 field guide (German)
 
 tools/
