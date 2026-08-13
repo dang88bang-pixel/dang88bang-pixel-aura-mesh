@@ -60,6 +60,12 @@ class UsbSerialTransport(
     private val portIndex: Int = 0,
     private val readTimeoutMs: Int = 200,
     private val writeTimeoutMs: Int = 1000,
+    /**
+     * Optional per-device rate. Used by [forLidar] so an S2 on an FTDI
+     * bridge opens at 1 Mbaud and an A1 on a CP2102 at 115200, without the
+     * caller having to know which is plugged in.
+     */
+    private val resolveBaud: ((vendorId: Int) -> Int)? = null,
 ) : SerialTransport {
 
     enum class OpenResult { OPENED, NO_DEVICE, PERMISSION_PENDING, FAILED }
@@ -106,8 +112,9 @@ class UsbSerialTransport(
                 ?: return fail("device has no port index $portIndex")
 
             serialPort.open(usbConnection)
+            val rate = resolveBaud?.invoke(driver.device.vendorId) ?: baudRate
             serialPort.setParameters(
-                baudRate,
+                rate,
                 UsbSerialPort.DATABITS_8,
                 UsbSerialPort.STOPBITS_1,
                 UsbSerialPort.PARITY_NONE,
@@ -122,7 +129,7 @@ class UsbSerialTransport(
             opened.set(true)
             deviceName = "${driver.device.manufacturerName ?: "?"} " +
                 "${driver.device.productName ?: "?"} " +
-                "(${driver.device.vendorId}:${driver.device.productId}) @$baudRate"
+                "(${driver.device.vendorId}:${driver.device.productId}) @$rate"
             lastError = ""
             Log.i(TAG, "opened $deviceName")
             OpenResult.OPENED
@@ -241,10 +248,18 @@ class UsbSerialTransport(
 
         /**
          * RPLIDAR: A1/A2 use a CP2102 at 115200; the S2 uses an FTDI bridge at
-         * 256000. Both vendors are accepted so either model is detected.
+         * 1 000 000 (Slamtec FAQ, not 256000 — that is the S1/A3 rate).
+         * Both vendors are accepted so either model is detected; the rate is
+         * picked from the bridge chip unless [baud] is a positive override.
          */
-        fun forLidar(context: Context, baud: Int = 115200) =
-            UsbSerialTransport(context, setOf(VID_SILICON_LABS, VID_FTDI), 0, baud)
+        fun forLidar(context: Context, baud: Int = 0) =
+            UsbSerialTransport(
+                context,
+                setOf(VID_SILICON_LABS, VID_FTDI),
+                0,
+                if (baud > 0) baud else LidarBaud.A_SERIES,
+                resolveBaud = if (baud > 0) null else { vid -> LidarBaud.forVendor(vid) },
+            )
 
         /**
          * IWR6843: port 0 is the CLI UART (configuration), port 1 the DATA

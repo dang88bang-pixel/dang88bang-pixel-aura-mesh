@@ -22,8 +22,8 @@
     <!-- Silicon Labs CP2105 Dual UART Bridge - 0x10C4 / 0xEA70 -->
     <usb-device vendor-id="4292" product-id="60016" />
 
-    <!-- FTDI FT232 Serial (UART) IC - RPLIDAR S2 @256000, generic serial
-         0x0403 / 0x6001 -->
+    <!-- FTDI FT232 Serial (UART) IC - RPLIDAR S2 @1000000 (NOT 256000),
+         generic serial. 0x0403 / 0x6001 -->
     <usb-device vendor-id="1027" product-id="24577" />
 
     <!-- ==================== TI IWR6843 mmWave ====================

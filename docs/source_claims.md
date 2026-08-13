@@ -68,6 +68,9 @@ matches the decimal Android actually parses.
   "Silicon Labs Dual CP2105 … Enhanced COM Port **or** XDS110 Class
   Application/User UART"; the data port is the Standard COM Port **or** the
   XDS110 Auxiliary Data Port
+- **[D7]** Slamtec, *RPLIDAR FAQ*, wiki.slamtec.com/display/SD/RPLIDAR+FAQ,
+  last modified 2026-02-04, read 2026-08-13. Baud-rate table for USB adapter
+  boards and the explicit note "The baud rate for S2 is 1M."
 
 | device | VID / PID | status |
 |---|---|---|
@@ -78,7 +81,7 @@ matches the decimal Android actually parses.
 | TI XDS110 debug probe (IWR6843) | `0x0451` / `0xBEF3` | **VERIFIED** [D4] — exposes an Application/User UART **and** an Auxiliary Data Port, which is what the two-port design relies on |
 | Realtek RTL2838 DVB-T (RTL-SDR) | `0x0BDA` / `0x2838` | **VERIFIED** [D4] |
 | Realtek RTL2832U DVB-T (RTL-SDR) | `0x0BDA` / `0x2832` | **VERIFIED** [D4] — **added** |
-| RPLIDAR S2 baud | 256000 | **NEEDS SOURCE** |
+| RPLIDAR S2 baud | **1 000 000** (was wrongly 256000) | **VERIFIED** [D7] | Slamtec *RPLIDAR FAQ*, wiki.slamtec.com/display/SD/RPLIDAR+FAQ, read 2026-08-13: "Black housing without DIP switch **1000000:S2,S3**" and "The baud rate for S2 is 1M." 256000 is the S1 / A3 / A2M7 rate. `LidarBaud.forVendor` now picks 1 Mbaud for an FTDI bridge and 115200 for a CP2102. |
 | IWR6843 CLI @115200 / DATA @921600 | — | **PARTIALLY VERIFIED** [D6] — the two-port split and the 921600 default are confirmed; the 115200 CLI rate is not |
 
 **Detection gap found and fixed (2026-08-13).** The mmWave factories matched
