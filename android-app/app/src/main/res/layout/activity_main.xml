@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/aura_background">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="@color/aura_surface"
+        app:title="@string/app_name"
+        app:titleTextColor="@color/aura_text"
+        xmlns:app="http://schemas.android.com/apk/res-auto" />
+
+    <TextView
+        android:id="@+id/status_banner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="8dp"
+        android:background="@color/aura_surface"
+        android:textColor="@color/aura_text_dim"
+        android:textSize="12sp"
+        android:fontFamily="monospace"
+        android:visibility="gone"
+        tools:text="Position: Fix ±0.15 m | Tokens: 4"
+        xmlns:tools="http://schemas.android.com/tools" />
+
+    <com.google.android.material.tabs.TabLayout
+        android:id="@+id/tab_layout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/aura_surface"
+        app:tabIndicatorColor="@color/aura_person"
+        app:tabSelectedTextColor="@color/aura_text"
+        app:tabTextColor="@color/aura_text_dim"
+        xmlns:app="http://schemas.android.com/apk/res-auto" />
+
+    <androidx.viewpager2.widget.ViewPager2
+        android:id="@+id/view_pager"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+</LinearLayout>

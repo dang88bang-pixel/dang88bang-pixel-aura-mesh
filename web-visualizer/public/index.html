@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>AURA 6.0 — Multisensor-Fusion &amp; 3D-Visualisierung</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='12' fill='none' stroke='%2300ff88' stroke-width='3'/></svg>" />
+
+  <!--
+    Import map keeps the Babylon ES modules resolvable in the browser without
+    a bundler step: the server exposes node_modules/@babylonjs under /vendor.
+  -->
+  <script type="importmap">
+  {
+    "imports": {
+      "@babylonjs/core": "/vendor/babylonjs/core/index.js",
+      "@babylonjs/core/": "/vendor/babylonjs/core/",
+      "@babylonjs/gui": "/vendor/babylonjs/gui/index.js",
+      "@babylonjs/gui/": "/vendor/babylonjs/gui/",
+      "@babylonjs/loaders": "/vendor/babylonjs/loaders/index.js",
+      "@babylonjs/loaders/": "/vendor/babylonjs/loaders/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <div>
+        <h1>AURA 6.0</h1>
+        <p>Honeywell CT45P · Multisensor-Fusion &amp; Durch-Wand-Analyse</p>
+      </div>
+    </div>
+    <div class="topbar-status">
+      <span class="badge" id="readout-fps">— FPS</span>
+      <span class="badge" id="connection-badge">VERBINDE …</span>
+    </div>
+  </header>
+
+  <div id="demo-banner" class="demo-banner">
+    Demo-Modus: kein Edge-Agent erreichbar — angezeigt wird eine simulierte Begehung.
+  </div>
+
+  <main class="layout">
+    <!-- ============ left sidebar: control ============ -->
+    <aside class="sidebar sidebar-left">
+      <section class="panel">
+        <h2>Szenario</h2>
+        <label class="field">
+          <span>Typ</span>
+          <select id="scenario-select">
+            <option value="evacuation">Evakuierung</option>
+            <option value="tactical">Taktik</option>
+            <option value="architecture">Architektur</option>
+            <option value="event">Veranstaltung</option>
+            <option value="research">Forschung</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Personen <output id="people-value">24</output></span>
+          <input type="range" id="people-slider" min="0" max="200" step="1" value="24" />
+        </label>
+
+        <label class="field">
+          <span>Rauchdichte <output id="smoke-value">0.35</output></span>
+          <input type="range" id="smoke-slider" min="0" max="1" step="0.05" value="0.35" />
+        </label>
+
+        <label class="field">
+          <span>Panikfaktor <output id="panic-value">0.30</output></span>
+          <input type="range" id="panic-slider" min="0" max="1" step="0.05" value="0.3" />
+        </label>
+
+        <label class="field">
+          <span>Geschwindigkeit <output id="speed-value">1.0x</output></span>
+          <input type="range" id="speed-slider" min="0.2" max="8" step="0.2" value="1" />
+        </label>
+
+        <div class="button-row">
+          <button id="btn-start" class="primary">Start</button>
+          <button id="btn-pause">Pause</button>
+          <button id="btn-stop">Stopp</button>
+        </div>
+
+        <progress id="scenario-progress" max="100" value="0"></progress>
+        <p class="metric-line" id="readout-scenario">kein Szenario aktiv</p>
+      </section>
+
+      <section class="panel">
+        <h2>Ebenen</h2>
+        <div class="layer-grid">
+          <label><input type="checkbox" data-layer="pointCloud" checked /> <i style="--c:#6A7A8A"></i> Punktwolke</label>
+          <label><input type="checkbox" data-layer="walls" checked /> <i style="--c:#6A7A8A"></i> Wände</label>
+          <label><input type="checkbox" data-layer="people" checked /> <i style="--c:#00FF88"></i> Personen</label>
+          <label><input type="checkbox" data-layer="throughWall" checked /> <i style="--c:#FF4444"></i> Durch-Wand</label>
+          <label><input type="checkbox" data-layer="tokens" checked /> <i style="--c:#FFCC00"></i> BLE-Token</label>
+          <label><input type="checkbox" data-layer="smoke" checked /> <i style="--c:#C8C8D2"></i> Rauch</label>
+          <label><input type="checkbox" data-layer="agents" checked /> <i style="--c:#FF8800"></i> Sim-Personen</label>
+          <label><input type="checkbox" data-layer="trail" checked /> <i style="--c:#2E7DD1"></i> Laufweg</label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Zeitachse</h2>
+        <input type="range" id="timeline" min="0" max="0" value="0" step="1" />
+        <div class="button-row">
+          <button id="btn-follow">Position folgen</button>
+          <button id="btn-clear-trail">Weg löschen</button>
+        </div>
+      </section>
+    </aside>
+
+    <!-- ============ 3D viewport ============ -->
+    <section class="viewport">
+      <canvas id="render-canvas" touch-action="none"></canvas>
+
+      <div class="viewport-overlay">
+        <div class="legend">
+          <span><i style="--c:#6A7A8A"></i> Struktur</span>
+          <span><i style="--c:#00FF88"></i> Person</span>
+          <span><i style="--c:#FFCC00"></i> Gerät</span>
+          <span><i style="--c:#FF4444"></i> Gefahr / Durch-Wand</span>
+          <span><i style="--c:#FF8800"></i> Ausgang</span>
+        </div>
+        <div class="view-buttons">
+          <button id="btn-reset-view">Ansicht zurücksetzen</button>
+          <button id="btn-top">Draufsicht</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ right sidebar: telemetry ============ -->
+    <aside class="sidebar sidebar-right">
+      <section class="panel">
+        <h2>EKF-Zustand <span class="badge" id="readout-fix">—</span></h2>
+        <dl class="readout">
+          <dt>Position</dt><dd id="readout-position">—</dd>
+          <dt>Unsicherheit</dt><dd id="readout-sigma">—</dd>
+          <dt>Kurs</dt><dd id="readout-yaw">—</dd>
+        </dl>
+        <p class="caption">Kovarianz-Diagonale (Pos · Geschw. · Lage)</p>
+        <canvas id="covariance-chart" width="280" height="70"></canvas>
+      </section>
+
+      <section class="panel">
+        <h2>Detektionen</h2>
+        <dl class="readout">
+          <dt>Kartenpunkte</dt><dd id="readout-points">—</dd>
+          <dt>Personen</dt><dd id="readout-people">—</dd>
+          <dt>Durch Wand</dt><dd id="readout-throughwall">—</dd>
+          <dt>Atmung</dt><dd id="readout-respiration">—</dd>
+          <dt>Puls</dt><dd id="readout-heart">—</dd>
+          <dt>Engstelle</dt><dd id="readout-bottleneck">—</dd>
+        </dl>
+      </section>
+
+      <section class="panel">
+        <h2>BLE-Token</h2>
+        <div id="rssi-list" class="rssi-list"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Gerät</h2>
+        <dl class="readout">
+          <dt>Akku</dt><dd id="readout-battery">—</dd>
+          <dt>Temperatur</dt><dd id="readout-temperature">—</dd>
+          <dt>Fusionsrate</dt><dd id="readout-rate">—</dd>
+        </dl>
+      </section>
+
+      <section class="panel">
+        <h2>Export</h2>
+        <div class="button-row">
+          <button id="btn-screenshot">PNG</button>
+          <button id="btn-export-gltf">glTF</button>
+          <button id="btn-export-json">JSON</button>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="statusbar">
+    <span id="status-text">Initialisierung …</span>
+  </footer>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

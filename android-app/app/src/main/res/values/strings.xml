@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AURA 6.0</string>
+
+    <string name="tab_live">Live</string>
+    <string name="tab_map">Karte</string>
+    <string name="tab_scenario">Szenarien</string>
+    <string name="tab_settings">Einstellungen</string>
+
+    <string name="scan_start">Scan starten</string>
+    <string name="scan_stop">Scan stoppen</string>
+    <string name="save_map">Karte speichern</string>
+    <string name="export">Exportieren</string>
+
+    <string name="status_battery">Akku: %1$d%%</string>
+    <string name="status_temperature">Temperatur: %1$.1f °C</string>
+    <string name="status_converged">Position: Fix</string>
+    <string name="status_diverged">Position: unsicher</string>
+    <string name="status_people">Personen erkannt: %1$d</string>
+    <string name="status_respiration">Atmung: %1$.0f/min</string>
+
+    <string name="scenario_evacuation">Evakuierung</string>
+    <string name="scenario_tactical">Taktik</string>
+    <string name="scenario_architecture">Architektur</string>
+    <string name="scenario_event">Veranstaltung</string>
+    <string name="scenario_research">Forschung</string>
+
+    <string name="param_people">Personenzahl</string>
+    <string name="param_smoke">Rauchdichte</string>
+    <string name="param_panic">Panikfaktor</string>
+
+    <string name="settings_server">Server-URL des Edge-Agent</string>
+    <string name="settings_mmwave_mode">mmWave-Modus</string>
+    <string name="settings_tokens">BLE-Token verwalten</string>
+    <string name="settings_storage">Speicherplatz</string>
+    <string name="settings_audit">Audit-Log prüfen</string>
+
+    <string name="audit_valid">Audit-Kette unversehrt (%1$d Einträge)</string>
+    <string name="audit_invalid">Audit-Kette manipuliert bei Index %1$d</string>
+
+    <string name="permission_required">Berechtigungen erforderlich für Sensorbetrieb</string>
+</resources>

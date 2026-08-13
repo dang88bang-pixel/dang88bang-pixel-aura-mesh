@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Aura" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/aura_primary</item>
+        <item name="colorOnPrimary">@color/aura_on_primary</item>
+        <item name="colorSecondary">@color/aura_person</item>
+        <item name="android:statusBarColor">@color/aura_background</item>
+        <item name="android:navigationBarColor">@color/aura_background</item>
+        <item name="android:windowBackground">@color/aura_background</item>
+    </style>
+</resources>

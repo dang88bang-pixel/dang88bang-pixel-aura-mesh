@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- Survey data and the audit chain must never leave the device via
+             an automatic cloud backup; export is an explicit, audited action. -->
+        <exclude domain="database" path="aura.db" />
+        <exclude domain="sharedpref" path="aura_secure.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="database" path="aura.db" />
+        <exclude domain="sharedpref" path="aura_secure.xml" />
+    </device-transfer>
+</data-extraction-rules>

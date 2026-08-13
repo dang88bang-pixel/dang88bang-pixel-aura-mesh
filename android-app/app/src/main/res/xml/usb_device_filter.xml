@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Silicon Labs CP210x (RPLIDAR A1/A2) -->
+    <usb-device vendor-id="4292" product-id="60000" />
+    <!-- FTDI FT232 (RPLIDAR S2, generic serial) -->
+    <usb-device vendor-id="1027" product-id="24577" />
+    <!-- TI XDS110 (IWR6843 CLI + DATA UART) -->
+    <usb-device vendor-id="1105" product-id="48883" />
+    <!-- Realtek RTL2838 (RTL-SDR) -->
+    <usb-device vendor-id="3034" product-id="10296" />
+    <!-- Qorvo DWM3000 evaluation board (CDC-ACM) -->
+    <usb-device vendor-id="1027" product-id="24592" />
+</resources>
