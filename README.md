@@ -124,6 +124,7 @@ docs/
   android_build.md               how to actually assemble the APK
   source_claims.md               every hardware constant, and how sure we are
   3d_roadmap_assessment.md       proposed 3D features vs what the CT45P can run
+  rf_reconstruction.md           camera-free mapping: what radio can and cannot do
   user_manual.md                 field guide (German)
 
 tools/

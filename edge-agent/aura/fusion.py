@@ -6,7 +6,9 @@ One control loop at ``loop_hz``:
 2. read LiDAR -> scan-match against the occupancy grid -> EKF pose update
 3. read UWB   -> range updates + micro-Doppler vitals (through-wall)
 4. read BLE   -> RSSI multilateration -> weak position update
-5. read mmWave/thermal -> people detection, fused into tracks
+5. read mmWave/thermal -> people detection, fused into tracks; static
+   mmWave returns are integrated into the grid too, so the map survives
+   with no LiDAR and no camera
 6. integrate the LiDAR sweep into the occupancy grid
 7. persist a transform record every ``persist_every`` iterations
 8. publish a telemetry frame to all WebSocket subscribers
@@ -31,6 +33,19 @@ from .sensors import BleDriver, ImuDriver, LidarDriver, MmwaveDriver, ThermalDri
 from .sensors.imu import StaticDetector
 from .storage import LocalVectorStore
 from .world import WORLD
+
+# --- mmWave static-structure mapping ----------------------------------
+# Thresholds for treating an mmWave return as *structure* rather than a
+# person, so it can be integrated into the occupancy grid.
+#
+# MMWAVE_STATIC_VELOCITY is deliberately below the 0.18 m/s people gate, so
+# a return is never counted as both a wall and a person. The band between
+# the two is left unclaimed: a slow-moving return is ambiguous, and writing
+# a walking person into the map as a wall is far worse than a sparser map.
+MMWAVE_STATIC_VELOCITY = 0.05    # m/s, radial
+MMWAVE_STATIC_MIN_SNR = 12.0     # dB; below this multipath ghosts dominate
+MMWAVE_STATIC_MIN_RANGE = 0.35   # m; closer than this is antenna crosstalk
+MMWAVE_STATIC_MAX_RANGE = 12.0   # m; IWR6843 indoor structure range
 
 
 @dataclass
@@ -413,9 +428,43 @@ class FusionPipeline:
                 gy = py + target.x * math.sin(yaw) + target.y * math.cos(yaw)
                 behind = not self.world.visible((px, py), (gx, gy))
                 detections.append((gx, gy, "mmwave", behind))
+
+            # --- static returns -> occupancy grid ---------------------
+            # The moving targets above are *people*. Everything else the
+            # radar sees is structure, and until now it was thrown away --
+            # which meant the map only ever existed if a LiDAR was attached.
+            #
+            # This is the one radio path that can image static geometry.
+            # RTI and Wi-Fi CSI cannot: both subtract an empty-room baseline
+            # by construction (see rti.calibrate) and so are motion sensors
+            # by definition. FMCW mmWave measures round-trip time over ~4 GHz
+            # of sweep, giving ~3.75 cm range resolution on a stationary wall.
+            #
+            # So with no LiDAR and no camera, a CT45P + IWR6843 still builds
+            # a real occupancy map. See docs/rf_reconstruction.md.
+            structure = [
+                t for t in targets
+                if abs(t.velocity) <= MMWAVE_STATIC_VELOCITY
+                and t.snr >= MMWAVE_STATIC_MIN_SNR
+                and MMWAVE_STATIC_MIN_RANGE <= t.range_m <= MMWAVE_STATIC_MAX_RANGE
+            ]
+            mmwave_cells = 0
+            if structure and self._pose_initialized:
+                pts = np.array(
+                    [[px + t.x * math.cos(yaw) - t.y * math.sin(yaw),
+                      py + t.x * math.sin(yaw) + t.y * math.cos(yaw)]
+                     for t in structure],
+                    dtype=float,
+                )
+                mmwave_cells = self.grid.integrate_scan((px, py), pts)
+                if mmwave_cells:
+                    self.diagnostics.note("mmwave_mapping")
+
             mmwave_payload = {
                 "targets": [t.as_dict() for t in targets[:64]],
                 "moving": len(moving),
+                "structure": len(structure),
+                "mapped_cells": mmwave_cells,
                 "profile": "reduced" if self.mmwave.reduced else "full",
             }
 
