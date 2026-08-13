@@ -1,0 +1,53 @@
+services:
+  edge-agent:
+    build: .
+    image: aura/edge-agent:6.0.0
+    container_name: aura-edge-agent
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - aura-data:/data
+    environment:
+      # Set to 0 and map the devices below to run against real hardware.
+      AURA_SIMULATE: "1"
+      AURA_PROJECT: "default"
+      AURA_LOOP_HZ: "20"
+      AURA_BROADCAST_HZ: "10"
+      AURA_LOG_LEVEL: "INFO"
+      # AURA_API_TOKEN: "change-me"
+      # AURA_LIDAR_PORT: "/dev/ttyUSB0"
+      # AURA_MMWAVE_PORT: "/dev/ttyACM0"
+    # Grant only the serial devices actually present, never --privileged:
+    # devices:
+    #   - "/dev/ttyUSB0:/dev/ttyUSB0"
+    #   - "/dev/ttyACM0:/dev/ttyACM0"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  visualizer:
+    build: ../web-visualizer
+    image: aura/visualizer:6.0.0
+    container_name: aura-visualizer
+    restart: unless-stopped
+    depends_on:
+      edge-agent:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      # Container-to-container DNS: the browser never uses this address.
+      AGENT_URL: "http://edge-agent:8080"
+      PORT: "3000"
+      HOST: "0.0.0.0"
+      DEMO_MODE: "1"
+
+volumes:
+  aura-data:

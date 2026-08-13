@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Concentric sensor rings in the AURA signal green. 108dp canvas, the
+     inner 72dp is the safe zone that every launcher mask keeps visible. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:strokeColor="#00FF88"
+        android:strokeWidth="3"
+        android:fillColor="#00000000"
+        android:pathData="M54,34 A20,20 0 1,1 53.9,34" />
+    <path
+        android:strokeColor="#00FF88"
+        android:strokeAlpha="0.55"
+        android:strokeWidth="2"
+        android:fillColor="#00000000"
+        android:pathData="M54,26 A28,28 0 1,1 53.9,26" />
+    <path
+        android:strokeColor="#2E7DD1"
+        android:strokeAlpha="0.8"
+        android:strokeWidth="2"
+        android:fillColor="#00000000"
+        android:pathData="M54,20 A34,34 0 1,1 53.9,20" />
+    <path
+        android:fillColor="#00FF88"
+        android:pathData="M54,50 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+</vector>

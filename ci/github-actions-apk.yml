@@ -1,0 +1,156 @@
+name: Build APK
+
+# Produces an installable APK and attaches it to the run.
+#
+# Why this exists as its own workflow: the project was authored in an
+# environment with no route to dl.google.com or Maven Central, so
+# `./gradlew assembleDebug` could never be run there. A GitHub runner has the
+# Android SDK preinstalled and unrestricted egress, which makes it the first
+# place the Android tier is actually *compiled* rather than statically checked.
+#
+# Expect the first run to surface real errors. Every gate in ci/README.md is a
+# static approximation of a compiler, and approximations miss things.
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'android-app/**'
+      - 'web-visualizer/**'
+      - '.github/workflows/apk.yml'
+  pull_request:
+    paths:
+      - 'android-app/**'
+  workflow_dispatch:
+    inputs:
+      build_release:
+        description: 'Also build an unsigned release APK (runs R8)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    name: Assemble
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up the Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Set up Gradle and its caches
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          # The wrapper JAR is generated in the next step rather than
+          # committed, so there is no checksum to validate against the
+          # published list.
+          validate-wrappers: false
+
+      # The repository deliberately does not commit gradle-wrapper.jar - see
+      # the header of android-app/gradlew. Generating it here from the runner's
+      # own Gradle keeps that property while still giving the build a wrapper.
+      - name: Generate the Gradle wrapper
+        working-directory: android-app
+        run: |
+          gradle wrapper --gradle-version 8.7 --no-daemon
+          ./gradlew --version
+
+      # MapFragment loads file:///android_asset/visualizer/index.html. Without
+      # this the tab shows its "bundle not embedded" placeholder, which is
+      # correct behaviour but not what we want to ship.
+      - name: Bundle the 3D visualiser into assets
+        run: |
+          cd web-visualizer && npm ci --no-audit --no-fund
+          cd .. && tools/bundle-visualizer.sh
+          test -f android-app/app/src/main/assets/visualizer/index.html
+
+      - name: Static gates
+        run: |
+          python3 tools/check-android-deps.py
+          python3 tools/check-usb-ids.py
+          python3 tools/check-string-formats.py
+          python3 tools/check-dead-ui.py
+          python3 tools/check-jni-symbols.py --source-only
+          python3 tools/check-proguard-rules.py
+
+      - name: Lint
+        working-directory: android-app
+        run: ./gradlew :app:lintDebug --no-daemon --stacktrace
+        continue-on-error: true
+
+      - name: Assemble debug APK
+        working-directory: android-app
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      # Confirms the JNI symbols the checker verified in source actually made
+      # it into the packaged .so files, for both ABIs.
+      - name: Verify the packaged native libraries
+        run: |
+          set -e
+          APK=$(find android-app/app/build/outputs/apk/debug -name '*.apk' | head -1)
+          echo "APK: $APK"
+          unzip -l "$APK" | grep -E 'lib/(arm64-v8a|armeabi-v7a)/.*\.so' || {
+            echo "no native libraries in the APK"; exit 1; }
+          mkdir -p /tmp/apk && unzip -o -q "$APK" 'lib/*' -d /tmp/apk
+          for so in $(find /tmp/apk -name 'libaura_core.so'); do
+            echo "--- $so"
+            "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" \
+              --defined-only --extern-only "$so" | grep -c 'Java_com_aura' \
+              || { echo "no JNI symbols exported"; exit 1; }
+          done
+
+      - name: Report APK size
+        run: |
+          APK=$(find android-app/app/build/outputs/apk/debug -name '*.apk' | head -1)
+          ls -lh "$APK"
+          echo "### APK built" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          ls -lh "$APK" | awk '{print $9, $5}' >> "$GITHUB_STEP_SUMMARY"
+          unzip -l "$APK" | grep -E '\.so$' >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the debug APK
+        uses: actions/upload-artifact@v5
+        with:
+          name: aura-agent-debug-apk
+          path: android-app/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # R8 runs only here. It is the step most likely to break at runtime
+      # rather than at build time: it renames the classes holding the JNI
+      # bindings unless app/proguard-rules.pro keeps them.
+      - name: Assemble release APK (unsigned)
+        if: inputs.build_release
+        working-directory: android-app
+        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Upload the unsigned release APK
+        if: inputs.build_release
+        uses: actions/upload-artifact@v5
+        with:
+          name: aura-agent-release-unsigned-apk
+          path: android-app/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: build-reports
+          path: |
+            android-app/app/build/reports/
+            android-app/app/build/outputs/logs/
+          retention-days: 7

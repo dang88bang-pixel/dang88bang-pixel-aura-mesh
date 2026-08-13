@@ -1,0 +1,24 @@
+{
+  "name": "aura-visualizer",
+  "version": "6.0.0",
+  "description": "AURA 6.0 - Babylon.js 3D visualisation for multisensor fusion and scenario analysis",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node --test tests/"
+  },
+  "dependencies": {
+    "@babylonjs/core": "^7.34.2",
+    "@babylonjs/gui": "^7.34.2",
+    "@babylonjs/loaders": "^7.34.2",
+    "express": "^4.21.2",
+    "http-proxy-middleware": "^3.0.3",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "Apache-2.0"
+}

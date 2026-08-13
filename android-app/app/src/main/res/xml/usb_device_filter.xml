@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    USB devices that should launch / notify this app when attached.
+
+    Android matches these by *decimal* vendor-id / product-id, which is why the
+    hex equivalent is in every comment - a silent mismatch here means the
+    sensor is simply never detected, and that is the failure mode hardest to
+    diagnose in the field.
+
+    All IDs verified against the USB-IF registry (usb-ids.gowdy.us) on
+    2026-08-13. See docs/source_claims.md.
+
+    A product-id is only pinned where the device is unambiguous. For the
+    mmWave and LiDAR bridges the vendor-id alone is matched, because the same
+    sensor ships with different bridge chips across board revisions.
+-->
+<resources>
+    <!-- ==================== RPLIDAR ==================== -->
+    <!-- Silicon Labs CP2102 UART Bridge - RPLIDAR A1/A2 @115200
+         0x10C4 / 0xEA60 -->
+    <usb-device vendor-id="4292" product-id="60000" />
+    <!-- Silicon Labs CP2105 Dual UART Bridge - 0x10C4 / 0xEA70 -->
+    <usb-device vendor-id="4292" product-id="60016" />
+
+    <!-- FTDI FT232 Serial (UART) IC - RPLIDAR S2 @256000, generic serial
+         0x0403 / 0x6001 -->
+    <usb-device vendor-id="1027" product-id="24577" />
+
+    <!-- ==================== TI IWR6843 mmWave ====================
+         Two bridge chips depending on board revision. TI's guidance: Rev C/D
+         IWR6843ISK carry a SiLabs CP2105 (Enhanced COM = CLI, Standard COM =
+         data); earlier boards use the XDS110 (Application/User UART +
+         Auxiliary Data Port). Both are matched above / below. -->
+    <!-- TI XDS110 debug probe - 0x0451 / 0xBEF3 -->
+    <usb-device vendor-id="1105" product-id="48883" />
+
+    <!-- ==================== Qorvo DWM3000 (UWB) ====================
+         The DWM3000EVB has no USB of its own; it is a shield. Ranging data
+         reaches the phone through whatever carrier board is used, which in
+         this project is an FTDI bridge. FT2232 is matched as well as FT232
+         because dual-channel boards enumerate as 0x6010.
+         0x0403 / 0x6010 -->
+    <usb-device vendor-id="1027" product-id="24592" />
+
+    <!-- ==================== RTL-SDR (passive radar) ====================
+         Realtek RTL2838 DVB-T - 0x0BDA / 0x2838 -->
+    <usb-device vendor-id="3034" product-id="10296" />
+    <!-- Realtek RTL2832U DVB-T - 0x0BDA / 0x2832 -->
+    <usb-device vendor-id="3034" product-id="10290" />
+</resources>

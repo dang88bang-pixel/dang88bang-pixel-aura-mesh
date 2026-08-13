@@ -1,0 +1,186 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  edge-agent:
+    name: Edge agent (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        working-directory: edge-agent
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Lint
+        working-directory: edge-agent
+        run: ruff check aura/ tests/ agent.py
+        continue-on-error: true
+      - name: Test
+        working-directory: edge-agent
+        run: python -m pytest tests/ -q --durations=10
+
+  native-core:
+    name: Native core (C++)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run the native test suite
+        working-directory: android-app/app/src/main/cpp
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -I. \
+              tests/test_aura_core.cpp aura_core.cpp -o aura_test
+          ./aura_test
+      - name: Build with sanitizers
+        working-directory: android-app/app/src/main/cpp
+        run: |
+          g++ -std=c++17 -O1 -g -fsanitize=address,undefined -I. \
+              tests/test_aura_core.cpp aura_core.cpp -o aura_test_asan
+          ./aura_test_asan
+
+      - name: Build the JNI layer and the llama stub
+        working-directory: android-app/app/src/main/cpp
+        run: |
+          # A minimal jni.h lets us compile-check the JNI layer without the NDK.
+          mkdir -p /tmp/jnistub && cp tests/jni_stub.h /tmp/jnistub/jni.h
+          g++ -std=c++17 -O1 -shared -fPIC -I/tmp/jnistub -I. \
+              aura_jni.cpp aura_core.cpp -o /tmp/libaura_core.so
+          g++ -std=c++17 -O1 -shared -fPIC -I/tmp/jnistub -I. \
+              llama_bridge.cpp -o /tmp/libllama_bridge.so
+
+      - name: JNI symbols must match the Kotlin declarations
+        run: |
+          # A mismatch is NOT a build error - it is an UnsatisfiedLinkError on
+          # the device, at the moment the feature is first used.
+          python3 tools/check-jni-symbols.py \
+            --library /tmp/libaura_core.so --library /tmp/libllama_bridge.so
+
+  kotlin-logic:
+    name: Kotlin logic (host JVM, no Android SDK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install the Kotlin compiler
+        run: |
+          curl -sSLo kotlin.zip \
+            https://github.com/JetBrains/kotlin/releases/download/v1.9.24/kotlin-compiler-1.9.24.zip
+          unzip -q kotlin.zip -d "$HOME"
+          echo "$HOME/kotlinc/bin" >> "$GITHUB_PATH"
+      - name: Run the audit-chain tests
+        run: tools/run-kotlin-tests.sh
+        # Verifies that the Kotlin CausalValidator hashes identically to the
+        # Python one - if that drifts, a chain written on a CT45P stops
+        # verifying on the edge agent.
+
+  android-static:
+    name: Android static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Every class named in the manifest must exist
+        run: |
+          set -e
+          cd android-app/app/src/main
+          fail=0
+          for c in $(grep -oE 'android:name="\.[A-Za-z.]+"' AndroidManifest.xml \
+                     | sed 's/android:name="\.//;s/"//'); do
+            path="java/com/aura/agent/$(echo "$c" | tr '.' '/').kt"
+            if [ ! -f "$path" ]; then echo "MISSING: $c ($path)"; fail=1; fi
+          done
+          exit $fail
+      - name: Every resource referenced by the manifest must exist
+        run: |
+          set -e
+          cd android-app/app/src/main
+          fail=0
+          for r in $(grep -oE '@(xml|mipmap|drawable|style|color)/[a-z_]+' AndroidManifest.xml | sort -u); do
+            type=${r%%/*}; type=${type#@}; name=${r##*/}
+            if ! find res -path "*/$type*/$name.xml" | grep -q .; then
+              if ! grep -rq "name=\"$name\"" res/values/ 2>/dev/null; then
+                echo "MISSING RESOURCE: $r"; fail=1
+              fi
+            fi
+          done
+          exit $fail
+      - name: Every third-party import must resolve to a fetchable dependency
+        run: |
+          python3 tools/check-android-deps.py
+      - name: USB ids must be registry-valid and consistent with the code
+        run: |
+          python3 tools/check-usb-ids.py
+      - name: getString arguments must match the format specifiers
+        run: |
+          python3 tools/check-string-formats.py
+      - name: Interactive views must be wired to code
+        run: |
+          python3 tools/check-dead-ui.py
+      - name: R8 keep rules must cover the JNI and inflated classes
+        run: |
+          python3 tools/check-proguard-rules.py
+
+  visualizer:
+    name: Web visualiser (Node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web-visualizer/package.json
+      - name: Install
+        working-directory: web-visualizer
+        run: npm install
+      - name: Syntax check
+        working-directory: web-visualizer
+        run: for f in src/*.js server.js; do node --check "$f"; done
+      - name: Smoke test the server
+        working-directory: web-visualizer
+        run: |
+          node server.js &
+          SERVER_PID=$!
+          sleep 3
+          curl -fsS http://127.0.0.1:3000/healthz
+          curl -fsS -o /dev/null http://127.0.0.1:3000/
+          kill $SERVER_PID
+
+  integration:
+    name: Integration (agent + visualiser)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - name: Start the stack
+        run: |
+          pip install -r edge-agent/requirements.txt
+          (cd edge-agent && python agent.py --port 8080 &)
+          (cd web-visualizer && npm install && node server.js &)
+          sleep 12
+      - name: Verify the pipeline end to end
+        run: |
+          set -e
+          curl -fsS http://127.0.0.1:8080/health | tee /dev/stderr | grep -q '"status"'
+          curl -fsS http://127.0.0.1:3000/healthz | grep -q '"agentReachable":true'
+          curl -fsS http://127.0.0.1:3000/api/v1/agent/state | grep -q '"ekf"'
+          curl -fsS http://127.0.0.1:3000/api/v1/agent/export/gltf | grep -q '"asset"'
+          curl -fsS -X POST http://127.0.0.1:3000/api/v1/agent/audit \
+               -H 'Content-Type: application/json' \
+               -d '{"action":"ci.check"}' | grep -q chain_hash
+          curl -fsS http://127.0.0.1:3000/api/v1/agent/audit/verify | grep -q '"valid":true'

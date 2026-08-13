@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Semantic colour code, shared with the Babylon.js visualiser
+         (web-visualizer/src/palette.js). Keep the two in sync. -->
+    <color name="aura_structure">#FF6A7A8A</color>  <!-- walls, furniture  -->
+    <color name="aura_person">#FF00FF88</color>     <!-- living beings     -->
+    <color name="aura_device">#FFFFCC00</color>     <!-- BLE tokens, APs   -->
+    <color name="aura_hazard">#FFFF4444</color>     <!-- danger zones      -->
+    <color name="aura_exit">#FFFF8800</color>       <!-- escape routes     -->
+
+    <color name="aura_background">#FF0A0D14</color>
+    <color name="aura_surface">#FF141A24</color>
+    <color name="aura_primary">#FF2E7DD1</color>
+    <color name="aura_on_primary">#FFFFFFFF</color>
+    <color name="aura_text">#FFE6ECF2</color>
+    <color name="aura_text_dim">#FF8A96A6</color>
+</resources>
