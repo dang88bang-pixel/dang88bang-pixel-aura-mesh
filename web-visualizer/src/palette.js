@@ -65,3 +65,31 @@ export function hexToRgb(hex) {
     b: parseInt(value.slice(4, 6), 16) / 255,
   };
 }
+
+/**
+ * Position-quality tiers, matching `classify_quality` in the Python agent and
+ * `PositionQuality` in the Android app.
+ *
+ * The thresholds come from the standards the system serves: NIST PSCR asks
+ * for better than 3 m 3D at 95% without beacons, and FCC 47 CFR 9.10 requires
+ * +/-3 m z-axis for 80% of E911 calls. A 3 m 95% 2D requirement is
+ * sigma <= 1.23 m.
+ */
+export const QUALITY_GOOD_M = 0.75;
+export const QUALITY_DEGRADED_M = 3.0;
+export const QUALITY_POOR_M = 10.0;
+
+export function qualityForSigma(sigmaMax) {
+  if (!Number.isFinite(sigmaMax)) return 'lost';
+  if (sigmaMax <= QUALITY_GOOD_M) return 'good';
+  if (sigmaMax <= QUALITY_DEGRADED_M) return 'degraded';
+  if (sigmaMax <= QUALITY_POOR_M) return 'poor';
+  return 'lost';
+}
+
+export const QUALITY_BADGES = {
+  good: { label: 'FIX', colour: PALETTE.person },
+  degraded: { label: 'UNGENAU', colour: PALETTE.device },
+  poor: { label: 'GROB', colour: PALETTE.exit },
+  lost: { label: 'KEIN FIX', colour: PALETTE.hazard },
+};

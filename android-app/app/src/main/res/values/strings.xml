@@ -16,6 +16,12 @@
     <string name="status_temperature">Temperatur: %1$.1f °C</string>
     <string name="status_converged">Position: Fix</string>
     <string name="status_diverged">Position: unsicher</string>
+    <!-- Graded position quality. Thresholds from NIST PSCR (3 m 3D @95%)
+         and FCC 47 CFR 9.10 (+/-3 m z-axis @80%). -->
+    <string name="status_quality_good">Position: Fix</string>
+    <string name="status_quality_degraded">Position: ungenau</string>
+    <string name="status_quality_poor">Position: grob</string>
+    <string name="status_quality_lost">Position: KEIN FIX</string>
     <string name="status_people">Personen erkannt: %1$d</string>
     <string name="status_respiration">Atmung: %1$.0f/min</string>
 

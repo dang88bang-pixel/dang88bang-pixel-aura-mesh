@@ -108,8 +108,17 @@ class NativeEkf : Closeable {
     }
 
     /** Heuristic used by the UI to show a "fix acquired" indicator. */
-    fun isConverged(threshold: Float = 0.75f): Boolean =
+    fun isConverged(threshold: Float = PositionQuality.GOOD_M): Boolean =
         positionSigma().all { it < threshold }
+
+    /**
+     * Graded position quality.
+     *
+     * Must agree with `classify_quality` in the Python agent: the handheld and
+     * the command post have to describe the same estimate the same way.
+     */
+    fun quality(): PositionQuality =
+        PositionQuality.forSigma(positionSigma().maxOrNull() ?: Float.POSITIVE_INFINITY)
 
     fun snapshot(timestamp: Long = System.currentTimeMillis()): EkfSnapshot {
         val s = state()
@@ -123,6 +132,7 @@ class NativeEkf : Closeable {
             quaternion = quaternion(),
             positionSigma = positionSigma(),
             converged = isConverged(),
+            quality = quality(),
         )
     }
 
@@ -169,6 +179,9 @@ data class EkfSnapshot(
     val quaternion: FloatArray,
     val positionSigma: FloatArray,
     val converged: Boolean,
+    val quality: PositionQuality = PositionQuality.forSigma(
+        positionSigma.maxOrNull() ?: Float.POSITIVE_INFINITY,
+    ),
 ) {
     val speed: Float
         get() = sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2])
@@ -184,6 +197,7 @@ data class EkfSnapshot(
         append("\"quaternion\":").append(quaternion.joinToString(",", "[", "]")).append(',')
         append("\"position_sigma\":").append(positionSigma.joinToString(",", "[", "]")).append(',')
         append("\"converged\":").append(converged)
+        append(",\"quality\":\"").append(quality.wire).append('"')
         append("}")
     }
 
@@ -205,5 +219,55 @@ data class EkfSnapshot(
         result = 31 * result + attitude.contentHashCode()
         result = 31 * result + quaternion.contentHashCode()
         return result
+    }
+}
+
+/**
+ * Operator-facing position quality.
+ *
+ * A boolean cannot carry this. Measured with no aiding, the estimate drifts
+ * 162 m in 60 s standing still and 4.7 km while walking; both report
+ * "not converged", exactly like a perfectly usable 0.8 m estimate. Between
+ * those the operator saw an identical display.
+ *
+ * The thresholds come from the standards the system is meant to serve:
+ * NIST PSCR asks for better than 3 m 3D at 95% without beacons, and FCC
+ * 47 CFR 9.10 requires +/-3 m z-axis for 80% of E911 calls. A 3 m 95% 2D
+ * requirement corresponds to sigma <= 1.23 m.
+ *
+ * Kept in sync with `classify_quality` in edge-agent/aura/ekf.py.
+ */
+enum class PositionQuality(val wire: String) {
+    /** Room-level. Safe to draw as a point. */
+    GOOD("good"),
+
+    /** Still inside the NIST 3 m envelope at about 1 sigma. */
+    DEGRADED("degraded"),
+
+    /** Right building, likely the wrong room. */
+    POOR("poor"),
+
+    /**
+     * Unusable. Must not be drawn as a definite position - a sphere at a
+     * specific point is a claim the filter is not making.
+     */
+    LOST("lost");
+
+    companion object {
+        const val GOOD_M = 0.75f
+        const val DEGRADED_M = 3.0f
+        const val POOR_M = 10.0f
+
+        fun forSigma(sigmaMax: Float): PositionQuality = when {
+            // NaN fails every <= comparison, so it already falls through to
+            // LOST (verified). The explicit test is kept anyway: it states the
+            // intent, and it survives a future reordering of these branches -
+            // put a >= test first and NaN would silently match it.
+            sigmaMax.isNaN() || sigmaMax.isInfinite() -> LOST
+            sigmaMax <= GOOD_M -> GOOD
+            sigmaMax <= DEGRADED_M -> DEGRADED
+            sigmaMax <= POOR_M -> POOR
+            else -> LOST
+        }
     }
 }

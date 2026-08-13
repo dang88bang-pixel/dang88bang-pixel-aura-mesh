@@ -105,6 +105,26 @@ if [[ ! -f "$BUILD/out-uwb/UwbGeometryTestKt.class" ]]; then
   exit 1
 fi
 
+echo "==> generating position-quality fixtures from the Python reference"
+CASES="$("$PYTHON_BIN" "$ROOT/tools/generate_quality_fixtures.py" | sed -n 's/^CASES=//p')"
+if [[ -z "$CASES" ]]; then
+  echo "error: could not generate quality fixtures" >&2
+  exit 1
+fi
+sed -e "s|@CASES@|$CASES|" \
+    "$APP/test/kotlin/PositionQualityTest.kt" > "$BUILD/src/PositionQualityTest.kt"
+
+echo "==> compiling the position-quality suite"
+mkdir -p "$BUILD/out-quality"
+compile "$BUILD/out-quality" \
+  "$APP/main/java/com/aura/agent/fusion/NativeEkf.kt" \
+  "$BUILD/src/PositionQualityTest.kt"
+
+if [[ ! -f "$BUILD/out-quality/PositionQualityTestKt.class" ]]; then
+  echo "error: position-quality suite produced no test class" >&2
+  exit 1
+fi
+
 echo "==> compiling the vitals suite"
 mkdir -p "$BUILD/out-vitals"
 compile "$BUILD/out-vitals" \
@@ -121,6 +141,7 @@ STATUS=0
 "$JAVA" -cp "$BUILD/out:${KOTLIN_STDLIB:-}" AuditChainTestKt || STATUS=1
 "$JAVA" -cp "$BUILD/out-uwb:${KOTLIN_STDLIB:-}" UwbGeometryTestKt || STATUS=1
 "$JAVA" -cp "$BUILD/out-vitals:${KOTLIN_STDLIB:-}" VitalsEstimatorTestKt || STATUS=1
+"$JAVA" -cp "$BUILD/out-quality:${KOTLIN_STDLIB:-}" PositionQualityTestKt || STATUS=1
 
 if [[ $STATUS -ne 0 ]]; then
   echo

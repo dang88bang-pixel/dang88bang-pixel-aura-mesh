@@ -109,6 +109,35 @@ class EkfConfig:
     max_dt: float = 0.5                # s, clamp for long scheduler stalls
 
 
+# Position-quality tiers, in metres of worst-axis 1-sigma.
+#
+# Grounded in the standards the system is meant to serve rather than picked to
+# look good: NIST PSCR asks for better than 3 m 3D at 95% without beacons, and
+# FCC 47 CFR 9.10 requires +/-3 m z-axis for 80% of E911 calls. A 3 m 95% 2D
+# requirement is sigma <= 1.23 m, so GOOD at 0.75 m sits comfortably inside it
+# while DEGRADED still meets the envelope at about 1 sigma.
+#
+# A boolean cannot express this. Measured drift after 60 s with no aiding is
+# 162 m standing and 4777 m walking; both report "not converged", exactly like
+# a 0.8 m estimate that is fine. See docs/open_issues_research.md.
+QUALITY_GOOD_M = 0.75
+QUALITY_DEGRADED_M = 3.0
+QUALITY_POOR_M = 10.0
+
+
+def classify_quality(sigma_max: float) -> str:
+    """Map worst-axis position sigma onto an operator-facing tier."""
+    if not math.isfinite(sigma_max):
+        return "lost"
+    if sigma_max <= QUALITY_GOOD_M:
+        return "good"
+    if sigma_max <= QUALITY_DEGRADED_M:
+        return "degraded"
+    if sigma_max <= QUALITY_POOR_M:
+        return "poor"
+    return "lost"
+
+
 @dataclass
 class EkfSnapshot:
     """Serialisable view of the filter state."""
@@ -126,6 +155,8 @@ class EkfSnapshot:
     innovation_rms: float
     updates: int
     converged: bool
+    quality: str
+    seconds_since_aiding: float
 
     def as_dict(self) -> dict:
         return {
@@ -142,6 +173,8 @@ class EkfSnapshot:
             "innovation_rms": self.innovation_rms,
             "updates": self.updates,
             "converged": self.converged,
+            "quality": self.quality,
+            "seconds_since_aiding": self.seconds_since_aiding,
         }
 
 
@@ -159,6 +192,12 @@ class ExtendedKalmanFilter:
         self.P[IDX_BA, IDX_BA] *= 1e-2
         self.last_timestamp: float | None = None
         self.updates = 0
+        # Timestamp of the last update that actually bounds *position*.
+        # Deliberately not set by update_yaw or update_zero_velocity: those
+        # constrain heading and velocity, but neither stops position drifting,
+        # which is the thing the operator needs warned about.
+        self.last_aiding_time: float | None = None
+        self._clock = 0.0
         self._innovations: list[float] = []
 
     # ------------------------------------------------------------------
@@ -189,12 +228,17 @@ class ExtendedKalmanFilter:
     # ------------------------------------------------------------------
     # prediction
     # ------------------------------------------------------------------
+    def _note_aiding(self) -> None:
+        """Record that position was constrained by a real measurement."""
+        self.last_aiding_time = self._clock
+
     def predict(self, gyro: Sequence[float], accel: Sequence[float], dt: float) -> None:
         """Strap-down propagation with an IMU sample.
 
         ``gyro`` is body angular rate [rad/s], ``accel`` is specific force in
         the body frame [m/s^2] (i.e. what an accelerometer reports).
         """
+        self._clock += dt
         dt = float(min(max(dt, 1e-4), self.config.max_dt))
         cfg = self.config
         w = np.asarray(gyro, dtype=float) - self.x[IDX_BG]
@@ -274,6 +318,7 @@ class ExtendedKalmanFilter:
     # sensor-specific updates
     # ------------------------------------------------------------------
     def update_position(self, position: Sequence[float], sigma: float | Sequence[float]) -> float:
+        self._note_aiding()
         z = np.asarray(position, dtype=float)
         H = np.zeros((3, STATE_DIM))
         H[:, IDX_POS] = np.eye(3)
@@ -288,6 +333,7 @@ class ExtendedKalmanFilter:
         without adding information and let the altitude drift away unchecked,
         so the vertical channel is deliberately left to the altitude prior.
         """
+        self._note_aiding()
         cfg = self.config
         yaw_innovation = wrap_pi(wrap_pi(yaw) - self.x[8])
         z = np.array([position[0], position[1], self.x[8] + yaw_innovation])
@@ -301,6 +347,7 @@ class ExtendedKalmanFilter:
 
     def update_uwb_range(self, anchor: Sequence[float], distance: float, sigma: float | None = None) -> float:
         """Range-only update against a known UWB anchor position."""
+        self._note_aiding()
         anchor_v = np.asarray(anchor, dtype=float)
         delta = self.x[IDX_POS] - anchor_v
         predicted = float(np.linalg.norm(delta))
@@ -312,6 +359,7 @@ class ExtendedKalmanFilter:
         return self._update(np.array([float(distance)]), np.array([predicted]), H, R)
 
     def update_ble_position(self, position: Sequence[float], sigma: float | None = None) -> float:
+        self._note_aiding()
         return self.update_position(position, sigma or self.config.sigma_ble_pos)
 
     def update_yaw(self, yaw: float, sigma: float | None = None) -> float:
@@ -330,6 +378,7 @@ class ExtendedKalmanFilter:
         return self._update(np.zeros(3), self.x[IDX_VEL].copy(), H, R)
 
     def update_altitude(self, altitude: float, sigma: float | None = None) -> float:
+        self._note_aiding()
         H = np.zeros((1, STATE_DIM))
         H[0, 2] = 1.0
         R = np.array([[(sigma or self.config.sigma_baro_z) ** 2]])
@@ -369,7 +418,12 @@ class ExtendedKalmanFilter:
             trace=float(np.trace(self.P)),
             innovation_rms=self.innovation_rms,
             updates=self.updates,
-            converged=bool(np.max(pos_sigma) < 0.75),
+            converged=bool(np.max(pos_sigma) < QUALITY_GOOD_M),
+            quality=classify_quality(float(np.max(pos_sigma))),
+            seconds_since_aiding=(
+                float(self._clock - self.last_aiding_time)
+                if self.last_aiding_time is not None else float("inf")
+            ),
         )
 
     def transform(self) -> dict:

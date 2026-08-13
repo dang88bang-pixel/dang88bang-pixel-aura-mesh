@@ -1,4 +1,4 @@
-import { PALETTE } from './palette.js';
+import { PALETTE, QUALITY_BADGES, qualityForSigma } from './palette.js';
 
 /**
  * Sidebar wiring: layer toggles, scenario controls, live readouts and export.
@@ -111,9 +111,18 @@ export class SimControls {
 
     const fixBadge = document.getElementById('readout-fix');
     if (fixBadge) {
-      const converged = ekf.converged ?? false;
-      fixBadge.textContent = converged ? 'FIX' : 'UNSICHER';
-      fixBadge.style.color = converged ? PALETTE.person : PALETTE.hazard;
+      // Graded, not binary. A boolean cannot distinguish a 0.8 m estimate
+      // from one that has drifted kilometres - both are "not converged", and
+      // both used to render identically. See docs/open_issues_research.md.
+      const sigma = Math.max(...(ekf.position_sigma ?? [Infinity]));
+      const quality = ekf.quality ?? qualityForSigma(sigma);
+      const age = ekf.seconds_since_aiding;
+      const badge = QUALITY_BADGES[quality] ?? QUALITY_BADGES.lost;
+      fixBadge.textContent = Number.isFinite(age) && age > 5
+        ? `${badge.label} · ${age.toFixed(0)} s ohne Stützung`
+        : badge.label;
+      fixBadge.style.color = badge.colour;
+      fixBadge.title = `1-sigma ${Number.isFinite(sigma) ? sigma.toFixed(2) : '?'} m`;
     }
 
     set('readout-points', String(frame.map?.stats?.cells_occupied ?? frame.map?.points?.length ?? 0));

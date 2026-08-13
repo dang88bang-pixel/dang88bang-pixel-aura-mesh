@@ -30,6 +30,7 @@ import com.aura.agent.AuraApplication
 import com.aura.agent.BuildConfig
 import com.aura.agent.R
 import com.aura.agent.fusion.FusionState
+import com.aura.agent.fusion.PositionQuality
 import com.aura.agent.fusion.SensorFusionService
 import com.aura.agent.sensors.BleBeacon
 import com.aura.agent.security.Severity
@@ -179,8 +180,17 @@ class MainActivity : AppCompatActivity() {
         banner.text = if (snapshot == null) {
             "Initialisierung ..."
         } else {
-            val status = if (snapshot.converged) getString(R.string.status_converged)
-            else getString(R.string.status_diverged)
+            // Graded rather than binary: a 0.8 m estimate and one that has
+            // drifted kilometres are both "not converged", and used to render
+            // identically. See docs/open_issues_research.md.
+            val status = getString(
+                when (snapshot.quality) {
+                    PositionQuality.GOOD -> R.string.status_quality_good
+                    PositionQuality.DEGRADED -> R.string.status_quality_degraded
+                    PositionQuality.POOR -> R.string.status_quality_poor
+                    PositionQuality.LOST -> R.string.status_quality_lost
+                },
+            )
             val sigma = snapshot.positionSigma.maxOrNull() ?: 0f
             "$status  ±%.2f m   |   Tokens: %d   |   Iterationen: %d"
                 .format(sigma, state.beacons, state.iterations)
