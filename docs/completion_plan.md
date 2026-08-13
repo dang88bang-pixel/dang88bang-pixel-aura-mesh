@@ -31,7 +31,7 @@ and stop there.
 | ~~**A4**~~ | ~~`AgentApiClient` never constructed~~ | — | **DONE**. One shared instance on `AuraApplication`, URL persisted and shared with the WebView. | S |
 | ~~**A5**~~ | ~~`NativeRti` never constructed~~ | — | **DONE**. `configureRti()`/`onRtiSample()` on the service, guarded by a voxel ceiling. Pipeline verified against the Python reference: attenuating the crossing links localises a target at (3.0, 3.0), the exact intersection. | S |
 | **A6** | `NativePassiveRadar` never constructed | no call sites | Unreachable. Needs an RTL-SDR attached; deferred until the USB path can be tested on hardware. | S |
-| **A7** | `LLMService` never constructed | no call sites | The offline assistant is unreachable. | M |
+| ~~**A7**~~ | ~~`LLMService` never constructed~~ | — | **DONE**. Constructed on `AuraApplication`; Settings tab loads a side-loaded GGUF (never bundled) and asks. Missing model / stub build is reported as such, and the tab still shows the live survey snapshot rather than a dead form. `VectorStore` extracted and host-tested (NaN similarity cannot rank first). | M |
 | ~~**A8**~~ | ~~`fab_save_map` does nothing~~ | — | **DONE**. Saves a map snapshot to the audit chain. `toolbar` is decorative and intentionally unbound. | XS |
 
 ## B. Correctness risks (from `docs/android_build.md`)
@@ -49,11 +49,11 @@ and stop there.
 |---|---|---|
 | **C1** | No Android build possible | `dl.google.com` + Maven Central blocked; all mirrors tried and unreachable. Static gates only. |
 | **C2** | Kotlin coverage is partial | Only `CausalValidator` and `UwbGeometry` are host-testable. Anything touching `Context` needs an emulator. |
-| **C3** | 7 claims still `NEEDS SOURCE` | Mostly the DWM3000 protocol — project-specific, not publicly verifiable. |
+| **C3** | RPLIDAR S2 baud was the last open hardware claim | **done** — Slamtec FAQ [D7]: S2/S3 are 1 000 000, not 256000. Remaining unverified items are project-specific (Aura anchor protocol vs stock DWM3000 firmware). |
 
 ## D. Confirmed complete (no action)
 
-- **Edge agent** — all 6 spec routes live, 39 routes total, 297 tests.
+- **Edge agent** — all 6 spec routes live, 39 routes total, 300 tests.
 - **Web visualiser** — all 10 buttons wired; `export/gltf` and `export/json`
   both return 200 against the running agent.
 - **Native core** — 618 checks; JNI 28/28 both directions.
@@ -77,7 +77,7 @@ Dependency-driven, most user-visible first:
 7. ~~**B4** foreground-service permission ordering~~ — **done**
 8. ~~**B3** VPN mutual-exclusion guard~~ — **done**
 9. **A6** passive radar — deferred, needs an RTL-SDR on real hardware
-10. **A7** LLM assistant UI ← *next*
+10. ~~**A7** LLM assistant UI~~ — **done**
 
 Each step: implement → extend the static gates where the failure would
 otherwise be silent → run all gates → commit → push.

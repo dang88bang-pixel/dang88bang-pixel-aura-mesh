@@ -49,6 +49,7 @@ import android.view.inputmethod.EditorInfo
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.textfield.TextInputEditText
 import com.aura.agent.NativeEngine
+import com.aura.agent.llm.LlmStatus
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.launch
@@ -620,6 +621,10 @@ class SettingsFragment : Fragment(), ServiceAware {
 
     private var auditStatus: TextView? = null
     private var storageStatus: TextView? = null
+    private var llmStatus: TextView? = null
+    private var llmQuestion: TextInputEditText? = null
+    private var llmAnswer: TextView? = null
+    private var llmAsk: MaterialButton? = null
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?,
@@ -628,6 +633,10 @@ class SettingsFragment : Fragment(), ServiceAware {
         val app = AuraApplication.instance
         auditStatus = view.findViewById(R.id.audit_status)
         storageStatus = view.findViewById(R.id.storage_status)
+        llmStatus = view.findViewById(R.id.llm_status)
+        llmQuestion = view.findViewById(R.id.llm_question)
+        llmAnswer = view.findViewById(R.id.llm_answer)
+        llmAsk = view.findViewById(R.id.llm_ask)
 
         val urlField = view.findViewById<TextInputEditText>(R.id.server_url)
         urlField?.setText(app.agentUrl)
@@ -704,8 +713,84 @@ class SettingsFragment : Fragment(), ServiceAware {
         }
     }
 
+    /**
+     * Try to load the side-loaded GGUF. Never blocks the UI thread: a 1 GB
+     * mmap on a QCS4290 is hundreds of milliseconds even when it fails.
+     */
+    private fun prepareAssistant() {
+        val llm = AuraApplication.instance.llm
+        llmStatus?.setText(R.string.settings_llm_loading)
+        viewLifecycleOwner.lifecycleScope.launch {
+            val status = llm.load()
+            llmStatus?.text = when (status) {
+                LlmStatus.LOADED -> getString(R.string.settings_llm_ready, llm.modelName)
+                else -> getString(R.string.settings_llm_unavailable, llm.statusDetail)
+            }
+        }
+    }
+
+    private fun askAssistant() {
+        val question = llmQuestion?.text?.toString()?.trim().orEmpty()
+        if (question.isEmpty()) {
+            llmAnswer?.setText(R.string.settings_llm_empty)
+            return
+        }
+        val llm = AuraApplication.instance.llm
+        val snapshot = surveySnapshot()
+        llmAnswer?.setText(R.string.settings_llm_thinking)
+        viewLifecycleOwner.lifecycleScope.launch {
+            if (!llm.isLoaded) {
+                // Still a real call site: show what we know rather than a
+                // button that appears to think and then lies.
+                llmAnswer?.text = getString(
+                    R.string.settings_llm_no_inference,
+                    llm.statusDetail.ifBlank { llm.status.name },
+                    snapshot,
+                    llm.searchPaths().joinToString("\n"),
+                )
+                return@launch
+            }
+            llm.index("live-survey", snapshot)
+            val answer = llm.ask(question)
+            llmAnswer?.text = answer
+            AuraApplication.instance.audit.append(
+                "llm", "ask",
+                JSONObject().put("q", question.take(80)).put("loaded", true),
+                Severity.INFO,
+            )
+        }
+    }
+
+    /**
+     * Compact survey summary injected as RAG context (and shown raw when
+     * the model is missing, so the tab is never a dead form).
+     */
+    private fun surveySnapshot(): String {
+        val state = (activity as? MainActivity)?.fusionService?.state?.value
+        if (state == null) return "Fusiondienst nicht verbunden."
+        val snap = state.ekf
+        return buildString {
+            append("Iterationen ").append(state.iterations)
+            append(" · Tokens ").append(state.beacons)
+            append(" · LiDAR ").append(state.lidarPoints)
+            append(" · UWB ").append(state.uwbAnchorsInView)
+            append(" · mmWave ").append(state.mmwaveTargets)
+            if (snap != null) {
+                append('\n')
+                append("Position %.2f, %.2f, %.2f".format(
+                    snap.position[0], snap.position[1], snap.position[2],
+                ))
+                append(" · Qualität ").append(snap.quality.name.lowercase())
+                val sigma = snap.positionSigma.maxOrNull() ?: Float.NaN
+                append(" · σ ").append("%.2f m".format(sigma))
+            }
+            state.respirationBpm?.let { append("\nAtmung %.0f/min".format(it)) }
+        }
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
         auditStatus = null; storageStatus = null
+        llmStatus = null; llmQuestion = null; llmAnswer = null; llmAsk = null
     }
 }

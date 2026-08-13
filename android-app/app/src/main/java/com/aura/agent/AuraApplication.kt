@@ -2,6 +2,7 @@ package com.aura.agent
 
 import android.app.Application
 import android.util.Log
+import com.aura.agent.llm.LLMService
 import com.aura.agent.network.AgentApiClient
 import com.aura.agent.security.CausalValidator
 import com.aura.agent.security.Severity
@@ -23,6 +24,15 @@ class AuraApplication : Application() {
      * on every tab swipe.
      */
     lateinit var api: AgentApiClient
+        private set
+
+    /**
+     * Offline assistant. Constructed here so it survives activity recreation;
+     * the model is *not* loaded until the settings tab asks, because a 1 GB
+     * resident Qwen would compete with the fusion loop on a 6 GB device the
+     * operator never opened the assistant on.
+     */
+    lateinit var llm: LLMService
         private set
 
     /** Persisted agent URL, shared with the WebView in MapFragment. */
@@ -50,6 +60,7 @@ class AuraApplication : Application() {
         instance = this
         audit = CausalValidator()
         api = AgentApiClient(baseUrl = agentUrl)
+        llm = LLMService(this)
         audit.append("app", "application.start", severity = Severity.NOTICE)
         Log.i("Aura", "AURA 6.0 starting, native core: ${NativeEngine.version()}")
     }

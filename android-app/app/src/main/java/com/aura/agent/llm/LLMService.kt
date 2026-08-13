@@ -6,9 +6,21 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
-import kotlin.math.sqrt
 
 private const val TAG = "AuraLLM"
+
+/** Why the assistant is or is not answering. Never a boolean. */
+enum class LlmStatus {
+    /** [LLMService.load] has not been called yet. */
+    NOT_TRIED,
+    LOADED,
+    /** No GGUF on internal storage, external files, or assets. */
+    NO_MODEL,
+    /** `System.loadLibrary("llama_bridge")` failed. */
+    LIBRARY_MISSING,
+    /** Library present, model file present, nativeInit returned 0 (stub build or unreadable file). */
+    INIT_FAILED,
+}
 
 /**
  * Offline assistant: Phi-3-mini (GGUF, Q4_K_M) via llama.cpp + a local RAG
@@ -37,6 +49,13 @@ class LLMService(private val context: Context) {
     var modelName: String = ""
         private set
 
+    var status: LlmStatus = LlmStatus.NOT_TRIED
+        private set
+
+    /** Human-readable reason, shown in the settings tab. */
+    var statusDetail: String = ""
+        private set
+
     val isLoaded: Boolean get() = handle != 0L
 
     /**
@@ -49,10 +68,18 @@ class LLMService(private val context: Context) {
         modelFileName: String = DEFAULT_MODEL,
         threads: Int = (Runtime.getRuntime().availableProcessors() - 1).coerceAtLeast(2),
         contextSize: Int = 2048,
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): LlmStatus = withContext(Dispatchers.IO) {
+        if (isLoaded) return@withContext LlmStatus.LOADED
+        if (!libraryLoaded) {
+            status = LlmStatus.LIBRARY_MISSING
+            statusDetail = "llama_bridge.so nicht geladen"
+            return@withContext status
+        }
         val modelFile = resolveModel(modelFileName) ?: run {
+            status = LlmStatus.NO_MODEL
+            statusDetail = "keine Datei $modelFileName in ${searchPaths().joinToString(" oder ")}"
             Log.w(TAG, "model $modelFileName not found - assistant disabled")
-            return@withContext false
+            return@withContext status
         }
         val available = Runtime.getRuntime().maxMemory()
         Log.i(TAG, "loading ${modelFile.name} (${modelFile.length() / 1_048_576} MB), heap ${available / 1_048_576} MB")
@@ -62,8 +89,24 @@ class LLMService(private val context: Context) {
                 Log.e(TAG, "llama.cpp init failed", it)
                 0L
             }
-        if (handle != 0L) modelName = modelFile.name
-        handle != 0L
+        if (handle != 0L) {
+            modelName = modelFile.name
+            status = LlmStatus.LOADED
+            statusDetail = modelFile.name
+        } else {
+            // Stub builds return 0 on purpose so isLoaded stays false rather
+            // than pretending a 1 GB file on disk is a running model.
+            status = LlmStatus.INIT_FAILED
+            statusDetail = "nativeInit gab 0 zurück (Stub-Build oder Datei unlesbar): ${modelFile.absolutePath}"
+        }
+        status
+    }
+
+    /** Places the operator can drop a GGUF so this service will find it. */
+    fun searchPaths(): List<String> = buildList {
+        add(File(context.filesDir, DEFAULT_MODEL).absolutePath)
+        context.getExternalFilesDir(null)?.let { add(File(it, DEFAULT_MODEL).absolutePath) }
+        add("assets/$DEFAULT_MODEL")
     }
 
     /** Plain completion, no retrieval. */
@@ -124,6 +167,8 @@ class LLMService(private val context: Context) {
             runCatching { nativeFree(handle) }
             handle = 0
             modelName = ""
+            status = LlmStatus.NOT_TRIED
+            statusDetail = ""
         }
     }
 
@@ -158,69 +203,16 @@ class LLMService(private val context: Context) {
         const val DEFAULT_MODEL = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
         const val PHI3_MODEL = "phi-3-mini-4k-instruct-q4_k_m.gguf"
 
-        init {
-            // Optional: the app runs fine without the LLM library present.
-            runCatching { System.loadLibrary("llama_bridge") }
-                .onFailure { Log.w(TAG, "llama_bridge unavailable - assistant disabled") }
-        }
-    }
-}
-
-data class VectorEntry(
-    val id: String,
-    val text: String,
-    val embedding: FloatArray,
-    val metadata: Map<String, String> = emptyMap(),
-) {
-    override fun equals(other: Any?): Boolean = other is VectorEntry && id == other.id
-    override fun hashCode(): Int = id.hashCode()
-}
-
-data class SearchHit(val entry: VectorEntry, val score: Float) {
-    val text: String get() = entry.text
-}
-
-/**
- * In-memory cosine-similarity index.
- *
- * A brute-force scan is the right choice here: a survey produces hundreds of
- * chunks, not millions, and an ANN index would cost more in complexity and
- * recall than it saves in microseconds.
- */
-class VectorStore {
-    private val entries = mutableListOf<VectorEntry>()
-
-    val size: Int get() = entries.size
-
-    @Synchronized
-    fun add(entry: VectorEntry) {
-        entries.removeAll { it.id == entry.id }
-        entries += entry
-    }
-
-    @Synchronized
-    fun search(query: FloatArray, topK: Int = 5): List<SearchHit> {
-        if (query.isEmpty() || entries.isEmpty()) return emptyList()
-        return entries
-            .map { SearchHit(it, cosine(query, it.embedding)) }
-            .sortedByDescending { it.score }
-            .take(topK)
-    }
-
-    @Synchronized
-    fun clear() = entries.clear()
-
-    private fun cosine(a: FloatArray, b: FloatArray): Float {
-        if (a.size != b.size || a.isEmpty()) return 0f
-        var dot = 0.0
-        var normA = 0.0
-        var normB = 0.0
-        for (i in a.indices) {
-            dot += a[i] * b[i]
-            normA += a[i] * a[i]
-            normB += b[i] * b[i]
-        }
-        val denominator = sqrt(normA) * sqrt(normB)
-        return if (denominator < 1e-9) 0f else (dot / denominator).toFloat()
+        /**
+         * Whether `libllama_bridge.so` actually loaded. The stub build still
+         * counts as loaded — it exports the symbols. A missing .so does not,
+         * and that is a different failure from "no GGUF on disk".
+         */
+        val libraryLoaded: Boolean = runCatching {
+            System.loadLibrary("llama_bridge")
+            true
+        }.onFailure {
+            Log.w(TAG, "llama_bridge unavailable - assistant disabled")
+        }.getOrDefault(false)
     }
 }

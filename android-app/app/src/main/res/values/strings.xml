@@ -67,4 +67,14 @@
     <string name="settings_tokens_todo">Token-Verwaltung: BLE-Pairing-UI folgt (siehe docs/completion_plan.md)</string>
     <string name="map_saved">Karte gespeichert · %1$d Chunks</string>
     <string name="map_save_unavailable">Speichern nicht möglich: Dienst nicht verbunden</string>
+    <!-- Offline assistant (A7). The model is side-loaded, never bundled. -->
+    <string name="settings_llm_heading">Offline-Assistent</string>
+    <string name="settings_llm_hint">Frage zum Survey</string>
+    <string name="settings_llm_ask">Fragen</string>
+    <string name="settings_llm_thinking">Denke nach…</string>
+    <string name="settings_llm_empty">Bitte eine Frage eingeben.</string>
+    <string name="settings_llm_ready">Bereit · %1$s</string>
+    <string name="settings_llm_loading">Lade Modell…</string>
+    <string name="settings_llm_unavailable">Assistent nicht verfügbar: %1$s</string>
+    <string name="settings_llm_no_inference">Kein Modell geladen (%1$s).\n\nAktueller Survey:\n%2$s\n\nGGUF ablegen unter:\n%3$s</string>
 </resources>
