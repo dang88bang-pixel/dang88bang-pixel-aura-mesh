@@ -66,6 +66,11 @@ class AgentConfig:
     cors_origins: str = field(default_factory=lambda: _env("CORS_ORIGINS", "*"))
     api_token: str = field(default_factory=lambda: _env("API_TOKEN", ""))
     log_level: str = field(default_factory=lambda: _env("LOG_LEVEL", "INFO"))
+    # Ties the local metric frame to WGS84 as "lat,lon[,hae[,yaw_deg]]".
+    # Empty by default and deliberately so: CoT export stays disabled until
+    # someone states where the origin actually is. See aura/cot.py.
+    geo_anchor: str = field(default_factory=lambda: _env("GEO_ANCHOR", ""))
+    cot_callsign: str = field(default_factory=lambda: _env("COT_CALLSIGN", "AURA"))
     sensors: SensorConfig = field(default_factory=SensorConfig)
 
     def resolved_db_path(self) -> Path:

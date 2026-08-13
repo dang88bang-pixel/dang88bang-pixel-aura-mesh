@@ -28,6 +28,7 @@ from .passive_radar import (
     simulate_surveillance,
     velocity_resolution,
 )
+from .cot import CotEncoder, GeoAnchor, GeoAnchorError
 from .rti import RtiGrid, RtiProcessor
 from .scenarios import SCENARIO_TYPES, ScenarioParams
 from .storage import LocalVectorStore
@@ -362,6 +363,37 @@ def create_app(config: AgentConfig | None = None, autostart: bool = True) -> Fas
             content=json.dumps(gltf),
             media_type="model/gltf+json",
             headers={"Content-Disposition": f'attachment; filename="{cfg.project}.gltf"'},
+        )
+
+    @app.get("/api/v1/agent/export/cot", tags=["map"], dependencies=auth)
+    def get_cot(include_contacts: bool = Query(default=True)) -> Response:
+        """Cursor-on-Target export for the TAK ecosystem.
+
+        Returns 409 rather than guessing when no geo anchor is configured:
+        AURA's fusion frame is local metres, and CoT is WGS84. Emitting
+        lat=0/lon=0 would put every contact in the Gulf of Guinea, and a
+        tactical display would draw it without complaint.
+        """
+        if not cfg.geo_anchor:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "no geo anchor configured; set GEO_ANCHOR='lat,lon[,hae[,yaw]]'. "
+                    "AURA's local frame has no position on Earth until you do."
+                ),
+            )
+        try:
+            anchor = GeoAnchor.from_config(cfg.geo_anchor)
+        except GeoAnchorError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        encoder = CotEncoder(anchor, callsign=cfg.cot_callsign)
+        people = [t.as_dict() for t in pipeline.people.tracks.values()] if include_contacts else []
+        events = encoder.events_for_state(pipeline.state(), people)
+        return Response(
+            content=CotEncoder.to_document(events),
+            media_type="application/xml",
+            headers={"Content-Disposition": f'attachment; filename="{cfg.project}.cot.xml"'},
         )
 
     @app.get("/api/v1/agent/export/json", tags=["map"], dependencies=auth)
