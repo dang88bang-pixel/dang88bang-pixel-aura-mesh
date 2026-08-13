@@ -149,14 +149,29 @@ public:
     void quaternion(float out[4]) const;
 
     float maxDt = 0.5f;
+    // Chi-square gate on the normalised innovation; 16 == 4 sigma at 1 DoF.
+    float gateThreshold = 16.0f;
+    // After this many consecutive rejections the filter distrusts itself
+    // rather than the sensor and accepts one update to recover.
+    int maxConsecutiveRejects = 5;
+    int rejected() const { return rejected_; }
     float sigmaAccel = 0.35f;
     float sigmaGyro = 0.02f;
     float sigmaGyroBias = 1.5e-4f;
     float sigmaAccelBias = 8.0e-4f;
 
 private:
-    void applyUpdate(const float* H, const float* innovation, const float* R, int m);
+    void applyUpdate(const float* H, const float* innovation, const float* R, int m,
+                     int sourceId = 0);
     void symmetrise();
+    int rejected_ = 0;
+    // Per-source streaks: two anchors can be locked out permanently while the
+    // other two keep resetting a shared counter. kMaxSources covers the
+    // update kinds plus a slot per anchor hash.
+    // 64 slots: collisions merely merge two anchors' streaks, which weakens
+    // the escape hatch slightly rather than breaking correctness.
+    static constexpr int kMaxSources = 64;
+    int consecutiveRejects_[kMaxSources] = {0};
 
     float x_[kStateDim];
     float P_[kStateDim * kStateDim];

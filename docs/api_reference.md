@@ -182,6 +182,13 @@ Body: `[[x, y, z], ...]`. Labels: `0` empty · `1` structure · `2` person ·
 On tampering, `valid` is false and `first_bad_index` points at the altered
 entry.
 
+### EKF rejection counter
+
+`ekf.rejected` counts measurements refused by the chi-square gate or the
+non-finite check, alongside `ekf.updates` for accepted ones. A healthy run
+sits at 0; a rising count means multipath, a failing sensor or a corrupted
+serial link. See `docs/measurement_gating.md`.
+
 ### Sensor health fields
 
 Every entry under `sensors` in `/state` carries, in addition to the driver's

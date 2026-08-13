@@ -395,3 +395,54 @@ def test_presence_requires_temporal_persistence():
     assert analyzer.analyze().presence is False, "first window must not assert presence"
     analyzer.analyze()
     assert analyzer.analyze().presence is True, "presence after the third window"
+
+
+# ---------------------------------------------------------------------------
+# UWB hardware parser: bounds on what a range is allowed to be
+# ---------------------------------------------------------------------------
+
+
+def _hw_uwb_line(line: str):
+    """Drive the hardware parse path with a synthetic serial line."""
+    from aura.sensors.uwb import UwbDriver
+
+    driver = UwbDriver("", 115200, False, None)
+    driver.simulate = False
+    driver._buffer = bytearray(line.encode("ascii"))
+    return driver, driver.read()
+
+
+def test_uwb_parser_accepts_plausible_ranges():
+    driver, reading = _hw_uwb_line("A=3.21,B=7.5;CIR=0.4,1.8\n")
+    assert reading is not None
+    assert reading.ranges == {"A": 3.21, "B": 7.5}
+    assert driver.status.errors == 0
+
+
+def test_uwb_parser_rejects_non_finite_and_absurd_ranges():
+    """float() accepts 'inf', 'nan' and '1e400' without complaint.
+
+    One such value reaching the EKF used to NaN the entire state vector.
+    """
+    driver, reading = _hw_uwb_line(
+        "A=3.21,B=inf,C=nan,D=-5.0,E=1e400,F=99999,G=7.5;CIR=0.4,1.8\n"
+    )
+    assert reading is not None
+    assert reading.ranges == {"A": 3.21, "G": 7.5}
+    assert driver.status.errors == 5
+
+
+def test_uwb_parser_bounds_match_the_hardware():
+    from aura.sensors.uwb import MAX_PLAUSIBLE_RANGE_M
+
+    _, ok = _hw_uwb_line(f"A={MAX_PLAUSIBLE_RANGE_M - 1:.1f}\n")
+    assert ok is not None and "A" in ok.ranges
+    _, too_far = _hw_uwb_line(f"A={MAX_PLAUSIBLE_RANGE_M + 1:.1f}\n")
+    assert too_far is None or "A" not in too_far.ranges
+
+
+def test_uwb_parser_keeps_a_zero_range():
+    """0.0 is degenerate but not impossible; it must not be silently dropped."""
+    _, reading = _hw_uwb_line("A=0.0,B=4.0\n")
+    assert reading is not None
+    assert reading.ranges["A"] == 0.0

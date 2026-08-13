@@ -130,6 +130,7 @@ docs/
   geo_anchor.md                  GNSS anchor + why its error dominates exported accuracy
   uwb_tdoa.md                    TDoA solver; why sync is the constraint and TWR is the default
   sensor_health.md               detecting a sensor that freezes instead of dying
+  measurement_gating.md          outlier + NaN rejection; why a gate can starve its filter
   user_manual.md                 field guide (German)
 
 tools/

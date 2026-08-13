@@ -19,6 +19,11 @@ import numpy as np
 from ..world import DEFAULT_UWB_ANCHORS, WORLD, World
 from .base import SensorDriver
 
+# DW1000/DW3000 class hardware tops out around 300 m in free space and far
+# less indoors. Anything beyond this is a parse error or a corrupted frame,
+# not a measurement.
+MAX_PLAUSIBLE_RANGE_M = 300.0
+
 # DW3000 register shorthand used by the hardware path
 CMD_RANGE = b"$RANGE\r\n"
 CMD_CIR = b"$CIR\r\n"
@@ -140,9 +145,17 @@ class UwbDriver(SensorDriver):
                 continue
             key, _, value = token.partition("=")
             try:
-                ranges[key.strip()] = float(value)
+                metres = float(value)
             except ValueError:
                 continue
+            # float() accepts "nan", "inf" and "1e400" without complaint, and
+            # one corrupted serial line is enough: a non-finite range NaNs the
+            # entire EKF state in a single update, from which it never
+            # recovers. Bound to what a UWB link can physically report.
+            if not math.isfinite(metres) or not (0.0 <= metres <= MAX_PLAUSIBLE_RANGE_M):
+                self.status.errors += 1
+                continue
+            ranges[key.strip()] = metres
         if cir.startswith("CIR="):
             parts = cir[4:].split(",")
             try:
