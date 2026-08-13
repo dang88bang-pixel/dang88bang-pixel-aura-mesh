@@ -29,6 +29,7 @@ from .passive_radar import (
     velocity_resolution,
 )
 from .cot import CotEncoder, GeoAnchor, GeoAnchorError
+from .mesh import MESHTASTIC_SAFE_PAYLOAD, MeshCodec
 from .rti import RtiGrid, RtiProcessor
 from .scenarios import SCENARIO_TYPES, ScenarioParams
 from .storage import LocalVectorStore
@@ -365,9 +366,8 @@ def create_app(config: AgentConfig | None = None, autostart: bool = True) -> Fas
             headers={"Content-Disposition": f'attachment; filename="{cfg.project}.gltf"'},
         )
 
-    @app.get("/api/v1/agent/export/cot", tags=["map"], dependencies=auth)
-    def get_cot(include_contacts: bool = Query(default=True)) -> Response:
-        """Cursor-on-Target export for the TAK ecosystem.
+    def _cot_events(include_contacts: bool) -> list:
+        """Shared by the CoT and mesh exports.
 
         Returns 409 rather than guessing when no geo anchor is configured:
         AURA's fusion frame is local metres, and CoT is WGS84. Emitting
@@ -389,11 +389,41 @@ def create_app(config: AgentConfig | None = None, autostart: bool = True) -> Fas
 
         encoder = CotEncoder(anchor, callsign=cfg.cot_callsign)
         people = [t.as_dict() for t in pipeline.people.tracks.values()] if include_contacts else []
-        events = encoder.events_for_state(pipeline.state(), people)
+        return encoder.events_for_state(pipeline.state(), people)
+
+    @app.get("/api/v1/agent/export/cot", tags=["map"], dependencies=auth)
+    def get_cot(include_contacts: bool = Query(default=True)) -> Response:
+        """Cursor-on-Target export for the TAK ecosystem."""
         return Response(
-            content=CotEncoder.to_document(events),
+            content=CotEncoder.to_document(_cot_events(include_contacts)),
             media_type="application/xml",
             headers={"Content-Disposition": f'attachment; filename="{cfg.project}.cot.xml"'},
+        )
+
+    @app.get("/api/v1/agent/export/mesh", tags=["map"], dependencies=auth)
+    def get_mesh_frame(include_contacts: bool = Query(default=True),
+                       limit: int = Query(default=MESHTASTIC_SAFE_PAYLOAD, ge=32, le=237)) -> Response:
+        """Compact binary frame sized for one LoRa/Meshtastic packet.
+
+        CoT XML does not fit: one self-event is ~470 bytes against a ~200 byte
+        practical payload. This frame is 8 + 22*n bytes, so self + 7 contacts
+        is 184 bytes. Records beyond the limit are truncated, self first.
+
+        This is AURA's own wire format and will NOT interoperate with the
+        Meshtastic ATAK plugin, which uses TAKPacket protobuf + zstd. See
+        docs/mesh_transport.md.
+        """
+        events = _cot_events(include_contacts)
+        records = MeshCodec.from_cot_events(events)
+        frame = MeshCodec.encode(records, limit=limit)
+        return Response(
+            content=frame,
+            media_type="application/octet-stream",
+            headers={
+                "X-Aura-Records": str(len(records)),
+                "X-Aura-Sent": str(min(len(records), MeshCodec.max_records(limit))),
+                "X-Aura-Frame-Bytes": str(len(frame)),
+            },
         )
 
     @app.get("/api/v1/agent/export/json", tags=["map"], dependencies=auth)

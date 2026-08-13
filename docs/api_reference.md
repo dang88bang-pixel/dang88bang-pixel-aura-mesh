@@ -72,6 +72,7 @@ Raw sensor/scenario events from the store.
 | `/api/v1/agent/export/gltf?height=2.7` | GET | glTF 2.0 download (BIM-importable) |
 | `/api/v1/agent/export/json?limit=2000` | GET | full state + map + history |
 | `/api/v1/agent/export/cot?include_contacts=true` | GET | Cursor-on-Target XML for TAK. **409** unless `AURA_GEO_ANCHOR` is set — see `docs/tactical_integration_assessment.md` |
+| `/api/v1/agent/export/mesh?limit=200` | GET | compact binary frame for one LoRa packet (8+22n bytes). Same 409 rule as `export/cot` |
 
 ---
 

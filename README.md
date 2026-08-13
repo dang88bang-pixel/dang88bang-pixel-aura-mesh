@@ -119,13 +119,14 @@ web-visualizer/                  Babylon.js 7
 
 docs/
   architecture.md                design and rationale
-  api_reference.md               36 routes (34 REST + WS + /health)
+  api_reference.md               37 routes (35 REST + WS + /health)
   performance_targets.md         measured vs specified, and why
   android_build.md               how to actually assemble the APK
   source_claims.md               every hardware constant, and how sure we are
   3d_roadmap_assessment.md       proposed 3D features vs what the CT45P can run
   rf_reconstruction.md           camera-free mapping: what radio can and cannot do
   tactical_integration_assessment.md  CoT/TAK, Meshtastic, ATAK: what applies here
+  mesh_transport.md              LoRa packet budget + duty cycle; why CoT XML needs a codec
   user_manual.md                 field guide (German)
 
 tools/
