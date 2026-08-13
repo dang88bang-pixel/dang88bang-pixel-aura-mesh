@@ -1,0 +1,48 @@
+#!/bin/sh
+#
+# Gradle wrapper launcher.
+#
+# gradle-wrapper.jar is intentionally NOT committed here. Two reasons:
+#   1. It is an opaque binary that executes during every build - exactly the
+#      supply-chain shape that has burned projects before.
+#   2. The environment this project was authored in had no network route to
+#      services.gradle.org, so no committed JAR could have been verified.
+#
+# Generate it locally with a trusted Gradle installation:
+#
+#     gradle wrapper --gradle-version 8.7
+#
+# That regenerates gradle-wrapper.jar AND gradle-wrapper.properties from your
+# own Gradle distribution, which is the only way to get a JAR whose provenance
+# you can actually vouch for. Verify the distribution itself against the
+# checksums published at https://gradle.org/release-checksums/ .
+#
+# Android Studio does this automatically on first project open.
+
+set -e
+
+DIR=$(cd "$(dirname "$0")" && pwd)
+WRAPPER_JAR="$DIR/gradle/wrapper/gradle-wrapper.jar"
+
+if [ ! -f "$WRAPPER_JAR" ]; then
+  cat >&2 <<'MSG'
+error: gradle/wrapper/gradle-wrapper.jar is not present.
+
+This repository does not ship the wrapper binary. Generate it with a trusted
+local Gradle 8.7+ installation:
+
+    cd android-app
+    gradle wrapper --gradle-version 8.7
+
+or simply open the project in Android Studio, which provisions it for you.
+MSG
+  exit 1
+fi
+
+if [ -n "$JAVA_HOME" ]; then
+  JAVACMD="$JAVA_HOME/bin/java"
+else
+  JAVACMD=java
+fi
+
+exec "$JAVACMD" -classpath "$WRAPPER_JAR" org.gradle.wrapper.GradleWrapperMain "$@"

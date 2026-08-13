@@ -87,6 +87,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-service:2.8.4")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.4")
     implementation("androidx.fragment:fragment-ktx:1.8.2")
+    // Required by MainActivity's tab pager. Missing this is a hard build error;
+    // it is NOT transitively provided by material or appcompat.
+    implementation("androidx.viewpager2:viewpager2:1.1.0")
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("androidx.webkit:webkit:1.11.0")
 

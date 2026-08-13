@@ -23,6 +23,7 @@ native test binary.
 | UWB vital signs | not specified | ±2 breaths/min at ≤ 5 m, LOS-ish | **16.8 vs 16.8 bpm**, 0 % FPR | ✅ |
 | Voxel compression | not specified | 10–100× on sparse scenes | **178–403×** | ✅ |
 | Audit chain verification | 100 % | 100 % | **100 %**, tamper index localised | ✅ |
+| Kotlin/Python hash parity | implied | byte-identical | **44/44 Kotlin checks**, digests pinned to Python | ✅ |
 | Fusion loop rate | not specified | 10–30 Hz on-device | **32 Hz** (sandbox), 20 Hz configured | ✅ |
 | WireGuard throughput | > 30 Mbit/s | 30–80 Mbit/s on QCS4290 | not benchmarkable | ⚠️ plausible |
 | Voxel render rate | > 10 FPS | 30–60 FPS with thin instances | not benchmarkable (no GPU) | ⚠️ plausible |
@@ -134,6 +135,16 @@ test_micro_doppler_false_positive_rate_on_noise
   0/60 false detections on pure noise (was 33 % before the fix in §6)
 ```
 
+### Kotlin audit chain (44 checks, `tools/run-kotlin-tests.sh`)
+```
+canonical JSON, chain integrity, tamper/delete/reorder detection,
+HMAC forgery rejection, export/restore round trip, severity filtering
+cross-platform: Kotlin digest == Python digest (pinned fixtures)
+```
+Runs on a plain JVM with kotlinc - no Android SDK, no Gradle, no Robolectric -
+so the logic that decides whether a survey is admissible is verified even where
+the Android toolchain is unavailable.
+
 ### Native core (618 assertions, `test_aura_core.cpp`)
 ```
 RTI peak error        0.177 m   (Python reference: 0.180 m)
@@ -160,6 +171,11 @@ each was found by a test rather than by inspection.
 | NLOS UWB anchors discarded | 1–2 usable anchors left the solution sliding along an unobservable direction | fuse all anchors, inflate σ to 0.55 m for NLOS instead of dropping |
 | `express.json()` before the proxy | every proxied POST hung until timeout | mount the body parser *after* the `/api` proxy |
 | Double scenario stop | returned 200 and duplicated history | `reaped` flag → 409 on the second call |
+| **Kotlin collapsed `1000.0` to `1000`** | canonical JSON differed from Python, so **every** audit entry written on a CT45P failed verification on the agent (every timestamp is a float) | render doubles exactly as Python's `json.dumps`; pinned by cross-platform fixtures |
+| **`(1.001 * 1000.0).toLong()` floored to 1000** | IEEE-754 gives `1000.9999999999999`; every restored entry not on a whole second failed to verify | `Math.round` instead of truncation |
+| `viewpager2` imported but never declared | guaranteed `assembleDebug` failure — it is not transitive via material/appcompat | added the dependency |
+| `GatekeeperVpnService` declared in the manifest, class absent | manifest-merger/runtime failure | implemented the service |
+| No launcher icon, empty Gradle wrapper dir | build could not produce an APK | vector adaptive icon + wrapper properties and script |
 
 ---
 

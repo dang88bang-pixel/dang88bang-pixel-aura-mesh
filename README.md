@@ -20,11 +20,15 @@ CT45P-X0N (Kotlin + C++/NEON)  ──REST/WS──▶  Edge agent (Python)  ─�
 | Edge agent (Python) | working, runnable | **162 tests pass** |
 | Native core (C++17/NEON) | compiles, cross-checked vs Python | **618 assertions pass** |
 | Web visualiser (Babylon.js) | working, runnable | live against the agent at 10 Hz |
-| Android app (Kotlin) | complete source, **not compiled** | no Android SDK in this environment |
+| Kotlin audit chain | compiles and runs on a host JVM | **44 checks pass**, digests pinned to Python |
+| Android app (full APK) | complete source, **never assembled** | no Android SDK reachable here |
 
-The Android layer is written against the same contracts the other two tiers
-are tested on, but it has never been through `gradlew` — treat it as reviewed
-source, not as verified binaries.
+Nuance on the last two rows: the Kotlin classes with no Android dependency —
+above all `CausalValidator`, which decides whether a survey is admissible — are
+compiled with `kotlinc` and executed in CI via `tools/run-kotlin-tests.sh`.
+Everything touching `Context`, `SensorManager`, `SQLiteOpenHelper` or JNI still
+needs a real `gradlew assembleDebug`, which this environment cannot run. See
+[`docs/android_build.md`](docs/android_build.md).
 
 ---
 
@@ -68,6 +72,7 @@ Every figure below comes from a test in this repository.
 | Passive radar clutter cancellation | **75–93 dB** |
 | Voxel compression (sparse scene) | **178–403×** |
 | Audit tamper detection | exact index localised |
+| Kotlin ↔ Python hash parity | byte-identical (pinned fixtures) |
 | Fusion loop | 32 Hz measured (20 Hz configured) |
 
 **And what does not:** passive radar range resolution is **62 m** with an
@@ -115,7 +120,13 @@ docs/
   architecture.md                design and rationale
   api_reference.md               38 routes, request/response shapes
   performance_targets.md         measured vs specified, and why
+  android_build.md               how to actually assemble the APK
   user_manual.md                 field guide (German)
+
+tools/
+  run-kotlin-tests.sh            host-JVM Kotlin suite (no Android SDK)
+  bundle-visualizer.sh           build the Babylon bundle into app assets
+  generate_audit_fixtures.py     regenerate the cross-platform digests
 ```
 
 ---
@@ -130,6 +141,9 @@ cd edge-agent && python -m pytest tests/ -q
 cd android-app/app/src/main/cpp/tests
 g++ -std=c++17 -O2 -I.. test_aura_core.cpp ../aura_core.cpp -o /tmp/aura_test
 /tmp/aura_test
+
+# Kotlin: 44 checks, needs only a JRE + kotlinc (no Android SDK)
+tools/run-kotlin-tests.sh
 ```
 
 The native suite cross-checks the C++ port against values produced by the
@@ -157,6 +171,12 @@ along the unobservable direction. Inflating σ to 0.55 m beats dropping them.
 a private mesh address; behind any proxy, `localhost:8080` in browser JS means
 the *browser's* machine. Everything goes through the visualiser's proxy over
 relative URLs.
+
+**Doubles are rendered exactly as Python's `json.dumps` does.** Collapsing
+`1000.0` to `1000` is the tidier-looking choice and it silently breaks the audit
+chain across platforms — every timestamp is a float, so every entry written on
+the handheld would fail verification on the agent. The cross-platform test pins
+Kotlin's digests against real Python output.
 
 **The presence gate is 18 dB, not 6.** At 6 dB the vital-sign detector had a
 33 % false-positive rate on pure noise — it reported people breathing in empty

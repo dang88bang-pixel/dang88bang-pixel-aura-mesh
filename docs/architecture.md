@@ -160,6 +160,14 @@ Hybrid flow-field + social-force model:
   easiest way to build an unverifiable audit log.
 * **Tamper localisation** — `verify()` returns the first bad index, so an
   investigator learns *where* the log was altered, not just *that* it was.
+* **Cross-platform digests** — the Kotlin and Python canonical forms must be
+  byte-identical, including float rendering (`1000.0`, never `1000`). Pinned by
+  `AuditChainTest.crossPlatformHashMatchesPython` against fixtures regenerated
+  from the Python reference on every run.
+* **Truncation caveat** — a hash chain cannot detect that entries were removed
+  from the *end*; the remaining prefix is internally consistent. The head hash
+  must be anchored externally (uploaded to the agent, or countersigned). This is
+  asserted explicitly in the Kotlin suite so the property is not forgotten.
 * **Network** — cleartext is allowed only for the mesh subnet in
   `network_security_config.xml`; everything else requires TLS.
 * **Backup exclusion** — survey data and the audit chain are excluded from
@@ -188,6 +196,7 @@ same-origin relative URLs.
 | `test_aura6.py` | 43 | RTI, passive radar, voxels, audit chain |
 | `test_api.py` | 31 | REST, auth, WebSocket, AURA 6.0 routes |
 | `test_aura_core.cpp` | 618 assertions | the native port, cross-checked vs Python |
+| `AuditChainTest.kt` | 44 checks | the Kotlin audit chain, digests pinned to Python |
 
 Run everything:
 
@@ -195,4 +204,10 @@ Run everything:
 cd edge-agent && python -m pytest tests/ -q
 cd android-app/app/src/main/cpp/tests && \
   g++ -std=c++17 -O2 -I.. test_aura_core.cpp ../aura_core.cpp -o /tmp/t && /tmp/t
+tools/run-kotlin-tests.sh
 ```
+
+None of these need an Android SDK. That is deliberate: the tiers that carry the
+most risk — the filter maths, the native port and the audit chain — must stay
+verifiable in an environment that cannot assemble an APK. See
+`docs/android_build.md` for what remains unverified as a result.

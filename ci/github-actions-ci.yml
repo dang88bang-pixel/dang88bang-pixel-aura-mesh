@@ -46,6 +46,74 @@ jobs:
               tests/test_aura_core.cpp aura_core.cpp -o aura_test_asan
           ./aura_test_asan
 
+  kotlin-logic:
+    name: Kotlin logic (host JVM, no Android SDK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install the Kotlin compiler
+        run: |
+          curl -sSLo kotlin.zip \
+            https://github.com/JetBrains/kotlin/releases/download/v1.9.24/kotlin-compiler-1.9.24.zip
+          unzip -q kotlin.zip -d "$HOME"
+          echo "$HOME/kotlinc/bin" >> "$GITHUB_PATH"
+      - name: Run the audit-chain tests
+        run: tools/run-kotlin-tests.sh
+        # Verifies that the Kotlin CausalValidator hashes identically to the
+        # Python one - if that drifts, a chain written on a CT45P stops
+        # verifying on the edge agent.
+
+  android-static:
+    name: Android static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Every class named in the manifest must exist
+        run: |
+          set -e
+          cd android-app/app/src/main
+          fail=0
+          for c in $(grep -oE 'android:name="\.[A-Za-z.]+"' AndroidManifest.xml \
+                     | sed 's/android:name="\.//;s/"//'); do
+            path="java/com/aura/agent/$(echo "$c" | tr '.' '/').kt"
+            if [ ! -f "$path" ]; then echo "MISSING: $c ($path)"; fail=1; fi
+          done
+          exit $fail
+      - name: Every resource referenced by the manifest must exist
+        run: |
+          set -e
+          cd android-app/app/src/main
+          fail=0
+          for r in $(grep -oE '@(xml|mipmap|drawable|style|color)/[a-z_]+' AndroidManifest.xml | sort -u); do
+            type=${r%%/*}; type=${type#@}; name=${r##*/}
+            if ! find res -path "*/$type*/$name.xml" | grep -q .; then
+              if ! grep -rq "name=\"$name\"" res/values/ 2>/dev/null; then
+                echo "MISSING RESOURCE: $r"; fail=1
+              fi
+            fi
+          done
+          exit $fail
+      - name: Every androidx/material import must have a declared dependency
+        run: |
+          set -e
+          cd android-app
+          fail=0
+          for pkg in $(grep -rhoE '^import (androidx|com\.google\.android\.material)[A-Za-z0-9._]*' \
+                       app/src/main/java | sed 's/^import //' | cut -d. -f1-3 | sort -u); do
+            group=$(echo "$pkg" | cut -d. -f1-2)
+            artifact=$(echo "$pkg" | cut -d. -f3)
+            if ! grep -qE "\"$group[.:]" app/build.gradle.kts; then
+              echo "NO DEPENDENCY for import $pkg"; fail=1
+            fi
+          done
+          exit $fail
+
   visualizer:
     name: Web visualiser (Node)
     runs-on: ubuntu-latest

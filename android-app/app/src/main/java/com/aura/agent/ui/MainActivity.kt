@@ -13,6 +13,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -25,12 +26,14 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
 import com.aura.agent.AuraApplication
+import com.aura.agent.BuildConfig
 import com.aura.agent.R
 import com.aura.agent.fusion.FusionState
 import com.aura.agent.fusion.SensorFusionService
 import com.aura.agent.security.Severity
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
+import org.json.JSONObject
 import kotlinx.coroutines.launch
 
 /**
@@ -188,20 +191,79 @@ class LiveViewFragment : Fragment() {
  * concrete structure.
  */
 class MapFragment : Fragment() {
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?,
     ): View {
         val view = inflater.inflate(R.layout.fragment_map, container, false)
-        view.findViewById<WebView>(R.id.map_webview)?.apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            // Required for the WASM/WebGL bundle loaded from assets
-            settings.allowFileAccess = true
-            settings.mediaPlaybackRequiresUserGesture = false
-            WebView.setWebContentsDebuggingEnabled(true)
-            loadUrl("file:///android_asset/visualizer/index.html")
+        val webView = view.findViewById<WebView>(R.id.map_webview) ?: return view
+
+        webView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            // The bundle is loaded from file:///android_asset/ so that the map
+            // works with no network at all - the common case underground or
+            // inside a concrete structure.
+            allowFileAccess = true
+            mediaPlaybackRequiresUserGesture = false
+            // Explicitly denied: the bundle is first-party, and allowing a
+            // file:// page to read arbitrary files or reach other origins is
+            // the classic WebView data-exfiltration hole.
+            allowContentAccess = false
+            @Suppress("DEPRECATION")
+            allowFileAccessFromFileURLs = false
+            @Suppress("DEPRECATION")
+            allowUniversalAccessFromFileURLs = false
+        }
+        if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
+
+        // The page has no same-origin host to derive the agent URL from, so we
+        // inject it. tools/bundle-visualizer.sh rewrites DataFetcher to read it.
+        val agentUrl = requireContext()
+            .getSharedPreferences("aura", 0)
+            .getString("agent_url", DEFAULT_AGENT_URL) ?: DEFAULT_AGENT_URL
+
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                view?.evaluateJavascript(
+                    "window.AURA_AGENT_URL = ${JSONObject.quote(agentUrl)};", null,
+                )
+            }
+        }
+
+        if (visualizerBundlePresent()) {
+            webView.loadUrl("file:///android_asset/visualizer/index.html")
+        } else {
+            // A blank WebView looks like a crash. Say what is missing instead.
+            webView.loadDataWithBaseURL(null, MISSING_BUNDLE_HTML, "text/html", "utf-8", null)
         }
         return view
+    }
+
+    private fun visualizerBundlePresent(): Boolean = runCatching {
+        requireContext().assets.list("visualizer")?.contains("index.html") == true
+    }.getOrDefault(false)
+
+    companion object {
+        private const val DEFAULT_AGENT_URL = "http://10.8.0.1:8080"
+
+        private val MISSING_BUNDLE_HTML = """
+            <!DOCTYPE html><html><head><meta name="viewport"
+              content="width=device-width,initial-scale=1"><style>
+              body{background:#0A0D14;color:#E6ECF2;font-family:sans-serif;
+                   padding:24px;line-height:1.6}
+              code{background:#1B2330;padding:2px 6px;border-radius:4px;
+                   font-size:13px;display:inline-block;margin-top:8px}
+              h2{color:#FFCC00;font-size:17px}
+            </style></head><body>
+              <h2>3D-Bundle nicht eingebettet</h2>
+              <p>Dieser Debug-Build enthält die Babylon.js-Visualisierung nicht.
+                 Sie wird beim Packaging aus <code>web-visualizer/</code> erzeugt:</p>
+              <code>tools/bundle-visualizer.sh</code>
+              <p>Alle übrigen Funktionen — Sensorfusion, Szenarien, Audit-Log —
+                 sind davon nicht betroffen.</p>
+            </body></html>
+        """.trimIndent()
     }
 }
 

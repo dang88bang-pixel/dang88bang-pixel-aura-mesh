@@ -163,8 +163,23 @@ class CausalValidator(
             is Boolean -> value.toString()
             is Int, is Long -> value.toString()
             is Double, is Float -> {
+                // MUST match Python's json.dumps(), which uses repr(float) and
+                // therefore keeps the trailing ".0" on integral values:
+                //   Python  json.dumps(1000.0) -> "1000.0"
+                //   Kotlin  (1000.0).toString() -> "1000.0"   (agrees)
+                //
+                // Collapsing 1000.0 to "1000" here — the obvious "tidy" choice —
+                // silently breaks cross-platform verification: every timestamp
+                // is a float, so *every* entry written on the handheld would
+                // fail to verify on the edge agent.
+                //
+                // Caveat: for |x| >= 1e16 or very small magnitudes the two
+                // languages disagree on exponent formatting (Kotlin "1.0E30"
+                // vs Python "1e+30"). Audit payloads must not carry such
+                // values; timestamps and metre-scale coordinates are safe.
                 val d = (value as Number).toDouble()
-                if (d == d.toLong().toDouble()) d.toLong().toString() else d.toString()
+                require(d.isFinite()) { "NaN/Infinity cannot be canonicalised" }
+                d.toString()
             }
             else -> quote(value.toString())
         }
@@ -245,7 +260,11 @@ data class AuditEntry(
     companion object {
         fun fromJson(json: JSONObject): AuditEntry = AuditEntry(
             index = json.getInt("index"),
-            timestamp = (json.getDouble("timestamp") * 1000.0).toLong(),
+            // Round, never truncate. 1001 ms serialises to 1.001 s, and
+            // 1.001 * 1000.0 == 1000.9999999999999 in IEEE-754, so toLong()
+            // floors it back to 1000 ms. That one-millisecond loss changes the
+            // canonical body and makes every restored entry fail verification.
+            timestamp = Math.round(json.getDouble("timestamp") * 1000.0),
             actor = json.getString("actor"),
             action = json.getString("action"),
             payload = json.optJSONObject("payload") ?: JSONObject(),
