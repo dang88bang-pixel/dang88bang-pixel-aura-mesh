@@ -107,6 +107,38 @@ class EkfConfig:
     sigma_zupt: float = 0.02           # m/s, zero-velocity update
     sigma_baro_z: float = 0.35         # m, barometric altitude
     max_dt: float = 0.5                # s, clamp for long scheduler stalls
+    # Chi-square gate on the normalised innovation. 16.0 is ~4 sigma for a
+    # 1-DoF measurement: loose enough that honest noise and a genuine fast
+    # movement pass, tight enough to stop a multipath reflection.
+    gate_threshold: float = 16.0
+    # After this many consecutive rejections the filter distrusts *itself*
+    # rather than the sensor, and lets one measurement through to recover.
+    max_consecutive_rejects: int = 5
+    # Noise inflation applied to that recovery update, so it nudges rather
+    # than yanks.
+    reject_recovery_inflation: float = 100.0
+
+
+def mahalanobis_gate(innovation: Iterable[float], covariance: np.ndarray, threshold: float = 16.0) -> bool:
+    """Chi-square gate: is this measurement consistent with the estimate?
+
+    `covariance` must be the **innovation** covariance S = H P H' + R, not the
+    state covariance P. Returns True to accept.
+
+    A singular S means the filter cannot say how surprising the measurement is,
+    so we accept rather than silently starve it of updates. A non-finite
+    distance is a different matter and is rejected.
+    """
+    y = np.asarray(list(innovation), dtype=float)
+    if not np.all(np.isfinite(y)) or not np.all(np.isfinite(covariance)):
+        return False
+    try:
+        d2 = float(y @ np.linalg.inv(covariance) @ y)
+    except np.linalg.LinAlgError:
+        return True
+    if not math.isfinite(d2):
+        return False
+    return d2 <= threshold
 
 
 # Position-quality tiers, in metres of worst-axis 1-sigma.
@@ -154,6 +186,7 @@ class EkfSnapshot:
     trace: float
     innovation_rms: float
     updates: int
+    rejected: int
     converged: bool
     quality: str
     seconds_since_aiding: float
@@ -172,6 +205,7 @@ class EkfSnapshot:
             "trace": self.trace,
             "innovation_rms": self.innovation_rms,
             "updates": self.updates,
+            "rejected": self.rejected,
             "converged": self.converged,
             "quality": self.quality,
             "seconds_since_aiding": self.seconds_since_aiding,
@@ -192,6 +226,11 @@ class ExtendedKalmanFilter:
         self.P[IDX_BA, IDX_BA] *= 1e-2
         self.last_timestamp: float | None = None
         self.updates = 0
+        self.rejected = 0
+        # Rejection streaks are counted per measurement source: two anchors can
+        # be permanently gated out while two others keep being accepted, which
+        # a single global counter would never reveal.
+        self._reject_streaks: dict[str, int] = {}
         # Timestamp of the last update that actually bounds *position*.
         # Deliberately not set by update_yaw or update_zero_velocity: those
         # constrain heading and velocity, but neither stops position drifting,
@@ -293,8 +332,38 @@ class ExtendedKalmanFilter:
     # ------------------------------------------------------------------
     # generic update
     # ------------------------------------------------------------------
-    def _update(self, z: np.ndarray, h: np.ndarray, H: np.ndarray, R: np.ndarray) -> float:
-        """Joseph-form measurement update. Returns the innovation norm."""
+    def _update(self, z: np.ndarray, h: np.ndarray, H: np.ndarray, R: np.ndarray,
+                source: str = "") -> float:
+        """Joseph-form measurement update. Returns the innovation norm.
+
+Every sensor update funnels through here, so this is where the two
+        things that can wreck the filter get stopped.
+
+        **Non-finite rejection.** A NaN or inf measurement poisons the whole
+        state vector in one step -- ``x`` and ``P`` go NaN and never recover,
+        and the quality label reads ``lost`` forever. A single corrupted serial
+        line can do it: the UWB parser used a bare ``float()``, which happily
+        returns ``inf`` for ``"1e400"`` and ``nan`` for ``"nan"``.
+
+        This check is *belt and braces*: ``mahalanobis_gate`` also refuses
+        non-finite input, independently of the threshold, so deleting the
+        explicit check below leaves every test green. It is kept because it
+        states the invariant at the top of the function where a reader will
+        look for it, and because it does not depend on the gate staying the way
+        it is today. It is not, however, load-bearing on its own -- see
+        ``test_non_finite_guard_holds_even_with_the_chi_square_gate_disabled``.
+
+        **Chi-square gate.** A measurement wildly inconsistent with the current
+        estimate is far more likely a multipath reflection or a parse error
+        than a real jump. Measured on this pipeline before the gate: one
+        +200 m range moved the estimate 8 m *permanently* while sigma stayed at
+        0.09 and quality stayed ``good``.
+        """
+        if not (np.all(np.isfinite(z)) and np.all(np.isfinite(h))
+                and np.all(np.isfinite(H)) and np.all(np.isfinite(R))):
+            self.rejected += 1
+            return 0.0
+
         y = z - h
         # angles (if any) must be wrapped by the caller before this point
         S = H @ self.P @ H.T + R
@@ -302,6 +371,37 @@ class ExtendedKalmanFilter:
             K = self.P @ H.T @ np.linalg.inv(S)
         except np.linalg.LinAlgError:  # pragma: no cover - numerically degenerate
             return 0.0
+
+        # Gate against the *innovation covariance* S, not P: S is what says how
+        # surprising this measurement should be, given both the state
+        # uncertainty and the sensor's own noise.
+        #
+        # The consecutive-rejection escape hatch is not optional. A filter that
+        # has become overconfident -- P collapsed far below the true error --
+        # finds every honest measurement "surprising" and gates it away, which
+        # keeps P small, which rejects the next one. Measured without the
+        # escape: a cold-start trilateration rejected 359 updates (two anchors
+        # locked out permanently) and
+        # settled 0.36 m off, converging to the wrong answer with high
+        # confidence. Persistent rejection means the *estimate* is wrong, not
+        # the sensor, so after a few in a row we let one through to pull the
+        # filter back and reset the count.
+        if not mahalanobis_gate(y, S, threshold=self.config.gate_threshold):
+            streak = self._reject_streaks.get(source, 0) + 1
+            self._reject_streaks[source] = streak
+            if streak <= self.config.max_consecutive_rejects:
+                self.rejected += 1
+                return 0.0
+            # Fall through: accept this one to recover, but widen R first so a
+            # genuine outlier cannot yank the state hard.
+            R = R * self.config.reject_recovery_inflation
+            S = H @ self.P @ H.T + R
+            try:
+                K = self.P @ H.T @ np.linalg.inv(S)
+            except np.linalg.LinAlgError:  # pragma: no cover
+                return 0.0
+        self._consecutive_rejects = 0
+
         self.x = self.x + K @ y
         self.x[IDX_ATT] = np.array([wrap_pi(v) for v in self.x[IDX_ATT]])
         I_KH = np.eye(STATE_DIM) - K @ H
@@ -323,7 +423,7 @@ class ExtendedKalmanFilter:
         H = np.zeros((3, STATE_DIM))
         H[:, IDX_POS] = np.eye(3)
         R = _diag_from_sigma(sigma, 3)
-        return self._update(z, self.x[IDX_POS].copy(), H, R)
+        return self._update(z, self.x[IDX_POS].copy(), H, R, source="position")
 
     def update_lidar_pose(self, position: Sequence[float], yaw: float) -> float:
         """Scan-match update: planar position + heading from LiDAR registration.
@@ -343,7 +443,7 @@ class ExtendedKalmanFilter:
         H[1, 1] = 1.0
         H[2, 8] = 1.0
         R = np.diag([cfg.sigma_lidar_pos ** 2, cfg.sigma_lidar_pos ** 2, cfg.sigma_yaw ** 2])
-        return self._update(z, h, H, R)
+        return self._update(z, h, H, R, source="lidar_pose")
 
     def update_uwb_range(self, anchor: Sequence[float], distance: float, sigma: float | None = None) -> float:
         """Range-only update against a known UWB anchor position."""
@@ -356,7 +456,8 @@ class ExtendedKalmanFilter:
         H = np.zeros((1, STATE_DIM))
         H[0, IDX_POS] = delta / predicted
         R = np.array([[(sigma or self.config.sigma_uwb_range) ** 2]])
-        return self._update(np.array([float(distance)]), np.array([predicted]), H, R)
+        return self._update(np.array([float(distance)]), np.array([predicted]), H, R,
+                            source=f"uwb:{anchor_v[0]:.1f},{anchor_v[1]:.1f}")
 
     def update_ble_position(self, position: Sequence[float], sigma: float | None = None) -> float:
         self._note_aiding()
@@ -368,21 +469,21 @@ class ExtendedKalmanFilter:
         innovation = wrap_pi(wrap_pi(yaw) - self.x[8])
         z = np.array([self.x[8] + innovation])
         R = np.array([[(sigma or self.config.sigma_yaw) ** 2]])
-        return self._update(z, np.array([self.x[8]]), H, R)
+        return self._update(z, np.array([self.x[8]]), H, R, source="yaw")
 
     def update_zero_velocity(self) -> float:
         """ZUPT - clamps drift while the operator stands still."""
         H = np.zeros((3, STATE_DIM))
         H[:, IDX_VEL] = np.eye(3)
         R = np.eye(3) * self.config.sigma_zupt ** 2
-        return self._update(np.zeros(3), self.x[IDX_VEL].copy(), H, R)
+        return self._update(np.zeros(3), self.x[IDX_VEL].copy(), H, R, source="zupt")
 
     def update_altitude(self, altitude: float, sigma: float | None = None) -> float:
         self._note_aiding()
         H = np.zeros((1, STATE_DIM))
         H[0, 2] = 1.0
         R = np.array([[(sigma or self.config.sigma_baro_z) ** 2]])
-        return self._update(np.array([float(altitude)]), np.array([self.x[2]]), H, R)
+        return self._update(np.array([float(altitude)]), np.array([self.x[2]]), H, R, source="altitude")
 
     # ------------------------------------------------------------------
     # diagnostics / serialisation
@@ -418,6 +519,7 @@ class ExtendedKalmanFilter:
             trace=float(np.trace(self.P)),
             innovation_rms=self.innovation_rms,
             updates=self.updates,
+            rejected=self.rejected,
             converged=bool(np.max(pos_sigma) < QUALITY_GOOD_M),
             quality=classify_quality(float(np.max(pos_sigma))),
             seconds_since_aiding=(
@@ -492,6 +594,9 @@ class FusionDiagnostics:
     """Rolling quality metrics exposed on ``/api/v1/agent/state``."""
 
     dropped_samples: int = 0
+    # Pipeline-level refusals (stuck driver, BLE fix too far from the estimate,
+    # a tick that raised). Distinct from ``EkfSnapshot.rejected``, which counts
+    # measurements the filter's own chi-square gate turned away.
     rejected_updates: int = 0
     sources: dict[str, int] = field(default_factory=dict)
 
@@ -506,11 +611,3 @@ class FusionDiagnostics:
         }
 
 
-def mahalanobis_gate(innovation: Iterable[float], covariance: np.ndarray, threshold: float = 16.0) -> bool:
-    """Chi-square gate used to reject outlier measurements before fusing."""
-    y = np.asarray(list(innovation), dtype=float)
-    try:
-        d2 = float(y @ np.linalg.inv(covariance) @ y)
-    except np.linalg.LinAlgError:  # pragma: no cover
-        return True
-    return d2 <= threshold
