@@ -47,4 +47,18 @@
     <string name="live_vitals_none">Durch-Wand: keine Vitalzeichen erkannt</string>
     <string name="live_vitals_no_uwb">Durch-Wand: kein UWB-Sensor verbunden</string>
     <string name="live_device_status">%1$d Zyklen · %2$d LiDAR-Punkte · %3$d UWB-Anker · %4$d mmWave-Ziele · EKF %5$s</string>
+    <!-- Scenario control -->
+    <string name="scenario_starting">Szenario wird gestartet…</string>
+    <string name="scenario_unreachable">Agent nicht erreichbar (%1$s). URL in den Einstellungen prüfen.</string>
+    <string name="scenario_metrics_fmt">%1$d Personen · %2$d entkommen · %3$d Verletzte · t=%4$.0f s</string>
+    <!-- Settings -->
+    <string name="settings_url_invalid">URL muss mit http:// oder https:// beginnen</string>
+    <string name="settings_audit_ok">Audit-Kette gültig · %1$d Einträge</string>
+    <string name="settings_audit_bad">Audit-Kette FEHLERHAFT ab Index %1$d: %2$s</string>
+    <string name="settings_storage">%1$d Ereignisse · %2$d Chunks · %3$.1f MB · Journal %4$s</string>
+    <string name="settings_storage_unavailable">Speicher: Dienst nicht verbunden</string>
+    <string name="settings_native_info">Native Bibliothek %1$s · %2$s</string>
+    <string name="settings_tokens_todo">Token-Verwaltung: BLE-Pairing-UI folgt (siehe docs/completion_plan.md)</string>
+    <string name="map_saved">Karte gespeichert · %1$d Chunks</string>
+    <string name="map_save_unavailable">Speichern nicht möglich: Dienst nicht verbunden</string>
 </resources>

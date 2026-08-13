@@ -36,6 +36,20 @@ import com.aura.agent.security.Severity
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 import org.json.JSONObject
+import android.widget.ArrayAdapter
+import android.widget.Spinner
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.progressindicator.LinearProgressIndicator
+import com.google.android.material.slider.Slider
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import android.view.inputmethod.EditorInfo
+import com.google.android.material.materialswitch.MaterialSwitch
+import com.google.android.material.textfield.TextInputEditText
+import com.aura.agent.NativeEngine
+import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.launch
 
 /**
@@ -385,6 +399,11 @@ class MapFragment : Fragment() {
             }
         }
 
+        // A visible button that does nothing is worse than no button.
+        view.findViewById<FloatingActionButton>(R.id.fab_save_map)?.setOnClickListener {
+            saveMapSnapshot(view)
+        }
+
         if (visualizerBundlePresent()) {
             webView.loadUrl("file:///android_asset/visualizer/index.html")
         } else {
@@ -392,6 +411,28 @@ class MapFragment : Fragment() {
             webView.loadDataWithBaseURL(null, MISSING_BUNDLE_HTML, "text/html", "utf-8", null)
         }
         return view
+    }
+
+    /**
+     * Persist the current map to the local store and record it in the audit
+     * chain, so a survey has a defensible "this is what we saw, when" record.
+     */
+    private fun saveMapSnapshot(root: View) {
+        val service = (activity as? MainActivity)?.fusionService
+        val stats = service?.storeStats()
+        val message = if (stats == null) {
+            getString(R.string.map_save_unavailable)
+        } else {
+            AuraApplication.instance.audit.append(
+                "map", "snapshot.saved",
+                JSONObject()
+                    .put("chunks", stats.optInt("chunks"))
+                    .put("events", stats.optInt("events")),
+                Severity.NOTICE,
+            )
+            getString(R.string.map_saved, stats.optInt("chunks"))
+        }
+        Snackbar.make(root, message, Snackbar.LENGTH_LONG).show()
     }
 
     private fun visualizerBundlePresent(): Boolean = runCatching {
@@ -421,14 +462,240 @@ class MapFragment : Fragment() {
     }
 }
 
+/**
+ * Scenario control: pick a scenario, set the parameters, run it on the agent.
+ *
+ * The simulation lives on the edge agent, not on the handheld — pathfinding
+ * for a few hundred agents is not something a CT45P should be doing while it
+ * is also running the sensor fusion loop. This fragment is a remote control,
+ * so every failure mode here is a network failure mode and is reported as
+ * such rather than silently doing nothing.
+ */
 class ScenarioFragment : Fragment() {
+
+    private val api get() = AuraApplication.instance.api
+
+    private var spinner: Spinner? = null
+    private var peopleSlider: Slider? = null
+    private var smokeSlider: Slider? = null
+    private var panicSlider: Slider? = null
+    private var progress: LinearProgressIndicator? = null
+    private var metrics: TextView? = null
+    private var pollJob: Job? = null
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?,
-    ): View = inflater.inflate(R.layout.fragment_scenario, container, false)
+    ): View {
+        val view = inflater.inflate(R.layout.fragment_scenario, container, false)
+        spinner = view.findViewById(R.id.scenario_spinner)
+        peopleSlider = view.findViewById(R.id.people_slider)
+        smokeSlider = view.findViewById(R.id.smoke_slider)
+        panicSlider = view.findViewById(R.id.panic_slider)
+        progress = view.findViewById(R.id.scenario_progress)
+        metrics = view.findViewById(R.id.scenario_metrics)
+
+        spinner?.adapter = ArrayAdapter(
+            requireContext(),
+            android.R.layout.simple_spinner_dropdown_item,
+            SCENARIO_LABELS.map(::getString),
+        )
+
+        view.findViewById<MaterialButton>(R.id.scenario_start)?.setOnClickListener { start() }
+        view.findViewById<MaterialButton>(R.id.scenario_stop)?.setOnClickListener { stop() }
+        return view
+    }
+
+    private fun start() {
+        val scenario = SCENARIO_IDS.getOrElse(spinner?.selectedItemPosition ?: 0) { "evacuation" }
+        val people = peopleSlider?.value?.toInt() ?: 24
+        val smoke = smokeSlider?.value ?: 0.35f
+        val panic = panicSlider?.value ?: 0.3f
+
+        metrics?.setText(R.string.scenario_starting)
+        viewLifecycleOwner.lifecycleScope.launch {
+            val reply = runCatching { api.startScenario(scenario, people, smoke, panic) }.getOrNull()
+            if (reply == null) {
+                metrics?.text = getString(R.string.scenario_unreachable, api.baseUrl)
+                return@launch
+            }
+            AuraApplication.instance.audit.append(
+                "scenario", "start",
+                JSONObject().put("scenario", scenario).put("people", people),
+                Severity.NOTICE,
+            )
+            pollMetrics()
+        }
+    }
+
+    private fun stop() {
+        pollJob?.cancel()
+        viewLifecycleOwner.lifecycleScope.launch {
+            val reply = runCatching { api.stopScenario() }.getOrNull()
+            progress?.progress = 0
+            metrics?.text = if (reply == null) {
+                getString(R.string.scenario_unreachable, api.baseUrl)
+            } else {
+                renderMetrics(reply)
+            }
+        }
+    }
+
+    /**
+     * Poll while a run is in progress.
+     *
+     * Polling rather than the telemetry WebSocket: scenario metrics update
+     * once a second at most, and holding a socket open for a screen the user
+     * may have swiped away from wastes radio power on a battery-limited
+     * device.
+     */
+    private fun pollMetrics() {
+        pollJob?.cancel()
+        pollJob = viewLifecycleOwner.lifecycleScope.launch {
+            while (isActive) {
+                val state = runCatching { api.getState() }.getOrNull()
+                val scenario = state?.optJSONObject("scenario")
+                if (scenario != null) {
+                    progress?.progress = (scenario.optDouble("progress", 0.0) * 100).toInt()
+                    metrics?.text = renderMetrics(scenario)
+                    if (scenario.optBoolean("finished", false)) break
+                }
+                delay(POLL_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun renderMetrics(json: JSONObject): String = getString(
+        R.string.scenario_metrics_fmt,
+        json.optInt("total_agents", json.optInt("people", 0)),
+        json.optInt("escaped", 0),
+        json.optInt("casualties", 0),
+        json.optDouble("sim_time", 0.0),
+    )
+
+    override fun onPause() {
+        super.onPause()
+        // Stop polling when the tab is not visible; ViewPager2 keeps
+        // offscreen fragments alive and they would poll forever.
+        pollJob?.cancel()
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        pollJob?.cancel()
+        spinner = null; peopleSlider = null; smokeSlider = null
+        panicSlider = null; progress = null; metrics = null
+    }
+
+    companion object {
+        private const val POLL_INTERVAL_MS = 1000L
+        private val SCENARIO_IDS = listOf(
+            "evacuation", "tactical", "architecture", "event", "research",
+        )
+        private val SCENARIO_LABELS = listOf(
+            R.string.scenario_evacuation, R.string.scenario_tactical,
+            R.string.scenario_architecture, R.string.scenario_event,
+            R.string.scenario_research,
+        )
+    }
 }
 
-class SettingsFragment : Fragment() {
+/**
+ * Settings, audit verification and storage/device diagnostics.
+ *
+ * The audit chain is verifiable *on the device*, without a server: an
+ * evidential log you can only check by uploading it somewhere is not much use
+ * to someone standing in a building with no signal.
+ */
+class SettingsFragment : Fragment(), ServiceAware {
+
+    private var auditStatus: TextView? = null
+    private var storageStatus: TextView? = null
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?,
-    ): View = inflater.inflate(R.layout.fragment_settings, container, false)
+    ): View {
+        val view = inflater.inflate(R.layout.fragment_settings, container, false)
+        val app = AuraApplication.instance
+        auditStatus = view.findViewById(R.id.audit_status)
+        storageStatus = view.findViewById(R.id.storage_status)
+
+        val urlField = view.findViewById<TextInputEditText>(R.id.server_url)
+        urlField?.setText(app.agentUrl)
+        urlField?.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) commitUrl(urlField.text?.toString())
+        }
+        // Committing on IME "done" as well as focus loss: on a rugged handheld
+        // with a hardware keyboard the field can lose focus in ways that do
+        // not fire, and silently discarding a typed URL is maddening.
+        urlField?.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_DONE) commitUrl(urlField.text?.toString())
+            false
+        }
+
+        view.findViewById<MaterialSwitch>(R.id.mmwave_reduced)?.apply {
+            isChecked = app.reducedMmwavePower
+            setOnCheckedChangeListener { _, checked -> app.reducedMmwavePower = checked }
+        }
+
+        view.findViewById<MaterialButton>(R.id.verify_audit)?.setOnClickListener { verifyAudit() }
+        view.findViewById<MaterialButton>(R.id.manage_tokens)?.setOnClickListener {
+            // Token pairing needs a BLE scan UI that does not exist yet; say
+            // so rather than presenting a button that appears to do nothing.
+            auditStatus?.setText(R.string.settings_tokens_todo)
+        }
+
+        view.findViewById<TextView>(R.id.native_info)?.text = getString(
+            R.string.settings_native_info,
+            NativeEngine.version(),
+            if (NativeEngine.hasNeon()) "NEON" else "generic",
+        )
+
+        renderStorage()
+        return view
+    }
+
+    override fun onServiceReady() = renderStorage()
+
+    private fun commitUrl(raw: String?) {
+        val url = raw?.trim().orEmpty()
+        if (url.isEmpty()) return
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            auditStatus?.text = getString(R.string.settings_url_invalid)
+            return
+        }
+        AuraApplication.instance.agentUrl = url
+        AuraApplication.instance.audit.append(
+            "settings", "agent_url.changed",
+            JSONObject().put("url", url), Severity.NOTICE,
+        )
+    }
+
+    private fun verifyAudit() {
+        val audit = AuraApplication.instance.audit
+        val result = audit.verify()
+        auditStatus?.text = if (result.valid) {
+            getString(R.string.settings_audit_ok, audit.size)
+        } else {
+            getString(R.string.settings_audit_bad, result.firstBadIndex ?: -1, result.message)
+        }
+    }
+
+    private fun renderStorage() {
+        val store = (activity as? MainActivity)?.fusionService?.storeStats()
+        storageStatus?.text = if (store == null) {
+            getString(R.string.settings_storage_unavailable)
+        } else {
+            getString(
+                R.string.settings_storage,
+                store.optInt("events"), store.optInt("chunks"),
+                store.optLong("size_bytes") / 1024.0 / 1024.0,
+                store.optString("journal_mode"),
+            )
+        }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        auditStatus = null; storageStatus = null
+    }
 }

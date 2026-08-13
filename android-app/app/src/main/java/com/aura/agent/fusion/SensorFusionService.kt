@@ -98,6 +98,10 @@ class SensorFusionService : Service() {
      * the allocator for no benefit, and the point cloud view already knows how
      * to decimate.
      */
+    /** Storage diagnostics for the settings tab; null before the service starts. */
+    fun storeStats(): JSONObject? =
+        if (::store.isInitialized) runCatching { store.stats() }.getOrNull() else null
+
     val lidarScans: SharedFlow<LidarScan>? get() = lidar?.scans
     val bleBeacons: StateFlow<Map<String, BleBeacon>> get() = ble.beacons
     val uwbReadings: SharedFlow<UwbReading>? get() = uwb?.readings

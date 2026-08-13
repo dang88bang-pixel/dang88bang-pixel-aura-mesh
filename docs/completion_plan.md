@@ -25,14 +25,14 @@ and stop there.
 
 | # | item | evidence | consequence | effort |
 |---|---|---|---|---|
-| **A1** | `LiveViewFragment` shows no data | 8 ids in `fragment_live.xml`, none read | The main tab is permanently empty. Highest user-visible impact. | M |
-| **A2** | `ScenarioFragment` inert | `scenario_spinner/start/stop/progress/metrics` unused | Scenarios cannot be run from the device at all. | M |
-| **A3** | `SettingsFragment` inert | `server_url`, `verify_audit`, `manage_tokens`, `*_status` unused | Agent URL is only settable via SharedPreferences; audit cannot be verified in the field. | M |
-| **A4** | `AgentApiClient` never constructed | no call sites | The device cannot talk to the edge agent. Blocks A1–A3. | S |
+| ~~**A1**~~ | ~~`LiveViewFragment` shows no data~~ | — | **DONE** `f4741fc`. Attitude, pose, sweep, RSSI bars, vitals, device health. Added `VitalsEstimator` (27 host tests). | M |
+| ~~**A2**~~ | ~~`ScenarioFragment` inert~~ | — | **DONE**. Spinner + 3 sliders + start/stop/progress/metrics, verified end-to-end against the running agent. | M |
+| ~~**A3**~~ | ~~`SettingsFragment` inert~~ | — | **DONE**. Agent URL, mmWave power, on-device audit verification, storage and native diagnostics. | M |
+| ~~**A4**~~ | ~~`AgentApiClient` never constructed~~ | — | **DONE**. One shared instance on `AuraApplication`, URL persisted and shared with the WebView. | S |
 | **A5** | `NativeRti` never constructed | no call sites | The RTI imaging path is unreachable from the app. | S |
 | **A6** | `NativePassiveRadar` never constructed | no call sites | Same, for passive radar. | S |
 | **A7** | `LLMService` never constructed | no call sites | The offline assistant is unreachable. | M |
-| **A8** | `MainActivity` has a `toolbar` id it never binds | `toolbar` unused | Cosmetic. | XS |
+| ~~**A8**~~ | ~~`fab_save_map` does nothing~~ | — | **DONE**. Saves a map snapshot to the audit chain. `toolbar` is decorative and intentionally unbound. | XS |
 
 ## B. Correctness risks (from `docs/android_build.md`)
 
@@ -68,14 +68,27 @@ and stop there.
 
 Dependency-driven, most user-visible first:
 
-1. **A4** `AgentApiClient` wiring — unblocks A1–A3.
-2. **A1** Live view — the tab users see first.
-3. **A2** Scenario control.
-4. **A3** Settings + audit verification.
-5. **A5/A6** RTI and passive radar entry points.
-6. **B4** foreground-service permission ordering.
-7. **B3** VPN mutual-exclusion guard.
-8. **A7** LLM assistant UI.
+1. ~~**A4** `AgentApiClient` wiring~~ — **done**
+2. ~~**A1** Live view~~ — **done**
+3. ~~**A2** Scenario control~~ — **done**
+4. ~~**A3** Settings + audit verification~~ — **done**
+5. ~~**A8** map snapshot button~~ — **done**
+6. **A5/A6** RTI and passive radar entry points ← *next*
+7. **B4** foreground-service permission ordering
+8. **B3** VPN mutual-exclusion guard
+9. **A7** LLM assistant UI
 
 Each step: implement → extend the static gates where the failure would
 otherwise be silent → run all gates → commit → push.
+
+## Gates added while doing this work
+
+Each exists because the failure it catches is silent — it compiles, renders,
+and misbehaves only in front of a user.
+
+| gate | catches |
+|---|---|
+| `check-string-formats.py` | `getString` argument/specifier mismatch → `IllegalFormatConversionException` at render time |
+| `check-dead-ui.py` | interactive views that render but are wired to nothing (this project had 23) |
+| `check-usb-ids.py` | hex/decimal slips in the USB filter → sensor silently never detected |
+| `check-android-deps.py` | imports with no resolvable coordinate or repository |

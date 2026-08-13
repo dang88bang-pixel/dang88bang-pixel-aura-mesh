@@ -125,6 +125,9 @@ jobs:
       - name: getString arguments must match the format specifiers
         run: |
           python3 tools/check-string-formats.py
+      - name: Interactive views must be wired to code
+        run: |
+          python3 tools/check-dead-ui.py
 
   visualizer:
     name: Web visualiser (Node)
