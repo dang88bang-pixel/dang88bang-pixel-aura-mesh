@@ -182,6 +182,22 @@ Body: `[[x, y, z], ...]`. Labels: `0` empty · `1` structure · `2` person ·
 On tampering, `valid` is false and `first_bad_index` points at the altered
 entry.
 
+### Sensor health fields
+
+Every entry under `sensors` in `/state` carries, in addition to the driver's
+own `connected` / `age_seconds` / `healthy`:
+
+| field | meaning |
+|---|---|
+| `health` | `ok`, `degraded`, `stuck` or `stale` |
+| `health_reason` | human-readable evidence, e.g. `payload unchanged for 40 samples (4.0 s)` |
+
+`healthy` is the **conjunction** of the driver's own view and the fault check,
+so a sensor that is connected and delivering frames on time but repeating the
+same payload reports `healthy: false`. Samples from a non-`ok` driver are not
+fused; each skip increments `diagnostics.rejected_updates`. See
+`docs/sensor_health.md`.
+
 ---
 
 ## UWB TDoA

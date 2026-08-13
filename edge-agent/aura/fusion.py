@@ -28,6 +28,7 @@ from .config import AgentConfig
 from .doppler import MicroDopplerAnalyzer, ThroughWallTracker
 from .ekf import ExtendedKalmanFilter, EkfConfig, FusionDiagnostics, wrap_pi
 from .mapping import OccupancyGrid, build_mesh, extract_walls
+from .sensor_health import SensorHealthMonitor
 from .scenarios import ScenarioEngine, ScenarioParams
 from .sensors import BleDriver, ImuDriver, LidarDriver, MmwaveDriver, ThermalDriver, UwbDriver
 from .sensors.imu import StaticDetector
@@ -179,6 +180,10 @@ class FusionPipeline:
         self.static_detector = StaticDetector()
         self.scenarios = ScenarioEngine(self.world)
         self.diagnostics = FusionDiagnostics()
+        # Catches the fault SensorStatus cannot see: a driver that keeps
+        # delivering frames on schedule while the values have stopped
+        # changing. See aura/sensor_health.py.
+        self.health = SensorHealthMonitor()
 
         sc = config.sensors
         sim = config.simulate
@@ -317,6 +322,10 @@ class FusionPipeline:
 
         # --- 1. IMU + prediction -------------------------------------
         imu_sample = self.imu.read()
+        imu_health = self.health.observe("imu", imu_sample, expected_hz=max(1.0, self.config.loop_hz * 0.5))
+        if imu_sample is not None and not imu_health.usable:
+            self.diagnostics.rejected_updates += 1
+            imu_sample = None
         if imu_sample is not None:
             self.ekf.predict(imu_sample.gyro, imu_sample.accel, dt)
             self.diagnostics.note("imu")
@@ -355,6 +364,13 @@ class FusionPipeline:
         # --- 3. LiDAR -------------------------------------------------
         lidar_payload = None
         scan = self.lidar.read() if self._pose_initialized else None
+        if self._pose_initialized:
+            lidar_health = self.health.observe(
+                "lidar", scan, expected_hz=max(1.0, self.config.loop_hz * 0.25)
+            )
+            if scan is not None and not lidar_health.usable:
+                self.diagnostics.rejected_updates += 1
+                scan = None
         if scan is not None and len(scan):
             body = np.column_stack(
                 [np.cos(scan.angles) * np.asarray(scan.distances),
@@ -376,6 +392,14 @@ class FusionPipeline:
         uwb_payload = None
         vitals = self.doppler.last
         detections: list[tuple[float, float, str, bool]] = []
+        uwb_health = self.health.observe(
+            "uwb", uwb_reading, expected_hz=max(1.0, self.config.loop_hz * 0.5)
+        )
+        if uwb_reading is not None and not uwb_health.usable:
+            # A repeated range is not a confirmation. Fusing it shrinks sigma
+            # while the error grows -- measured at ~2x error on this pipeline.
+            self.diagnostics.rejected_updates += 1
+            uwb_reading = None
         if uwb_reading is not None:
             # Fuse *every* anchor, but inflate the noise for non-line-of-sight
             # links instead of dropping them: with only 1-2 LOS anchors the
@@ -399,6 +423,10 @@ class FusionPipeline:
 
         # --- 4. BLE ---------------------------------------------------
         beacons = self.ble.read()
+        ble_health = self.health.observe("ble", beacons, expected_hz=1.0)
+        if beacons is not None and not ble_health.usable:
+            self.diagnostics.rejected_updates += 1
+            beacons = None
         ble_payload = None
         if beacons:
             fix = self.ble.multilaterate(beacons)
@@ -419,6 +447,12 @@ class FusionPipeline:
 
         # --- 5. mmWave + thermal -> people ---------------------------
         targets = self.mmwave.read()
+        mmwave_health = self.health.observe(
+            "mmwave", targets, expected_hz=max(1.0, self.config.loop_hz * 0.25)
+        )
+        if targets is not None and not mmwave_health.usable:
+            self.diagnostics.rejected_updates += 1
+            targets = None
         mmwave_payload = None
         if targets:
             px, py, yaw = pose
@@ -469,6 +503,13 @@ class FusionPipeline:
             }
 
         thermal_frame = self.thermal.read() if self._iterations % 2 == 0 else None
+        if self._iterations % 2 == 0:
+            thermal_health = self.health.observe(
+                "thermal", thermal_frame, expected_hz=max(0.5, self.config.loop_hz * 0.25)
+            )
+            if thermal_frame is not None and not thermal_health.usable:
+                self.diagnostics.rejected_updates += 1
+                thermal_frame = None
         thermal_payload = None
         if thermal_frame is not None:
             px, py, yaw = pose
@@ -566,7 +607,23 @@ class FusionPipeline:
         return {
             "ekf": snap.as_dict(),
             "transform": self.ekf.transform(),
-            "sensors": {d.name: d.info for d in self.drivers},
+            "sensors": {
+                d.name: {
+                    **d.info,
+                    # Merge the fault checks over the driver's own status, so a
+                    # frozen-but-connected sensor cannot report itself healthy.
+                    **(
+                        {
+                            "health": v.state.value,
+                            "health_reason": v.reason,
+                            "healthy": d.info.get("healthy", False) and v.usable,
+                        }
+                        if (v := self.health.verdicts().get(d.name)) is not None
+                        else {}
+                    ),
+                }
+                for d in self.drivers
+            },
             "map": self.grid.stats().as_dict(),
             "diagnostics": self.diagnostics.as_dict(),
             "storage": self.store.stats(),

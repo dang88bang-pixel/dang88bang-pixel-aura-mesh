@@ -129,6 +129,7 @@ docs/
   mesh_transport.md              LoRa packet budget + duty cycle; why CoT XML needs a codec
   geo_anchor.md                  GNSS anchor + why its error dominates exported accuracy
   uwb_tdoa.md                    TDoA solver; why sync is the constraint and TWR is the default
+  sensor_health.md               detecting a sensor that freezes instead of dying
   user_manual.md                 field guide (German)
 
 tools/
