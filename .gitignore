@@ -49,3 +49,7 @@ aura_test_asan
 
 # Host-side JVM/Kotlin toolchain fetched by tools/setup-kotlin-toolchain.sh
 .toolchain/
+
+# Extracted third-party reference documents (tools/ingest-reference-docs.py).
+# Large and mostly vendor material - kept out of the repo deliberately.
+docs/reference/

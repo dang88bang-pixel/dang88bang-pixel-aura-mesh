@@ -122,10 +122,14 @@ docs/
   api_reference.md               38 routes, request/response shapes
   performance_targets.md         measured vs specified, and why
   android_build.md               how to actually assemble the APK
+  source_claims.md               every hardware constant, and how sure we are
   user_manual.md                 field guide (German)
 
 tools/
   run-kotlin-tests.sh            host-JVM Kotlin suite (no Android SDK)
+  setup-kotlin-toolchain.sh      fetch a JRE + kotlinc when none is installed
+  check-android-deps.py          imports vs declared/fetchable dependencies
+  ingest-reference-docs.py       extract the PDF/TXT reference set to text
   check-jni-symbols.py           external fun <-> Java_* symbol cross-check
   bundle-visualizer.sh           build the Babylon bundle into app assets
   generate_audit_fixtures.py     regenerate the cross-platform digests
