@@ -268,7 +268,11 @@ def create_app(config: AgentConfig | None = None, autostart: bool = True) -> Fas
     store = LocalVectorStore(cfg.resolved_db_path(), cfg.project)
     pipeline = FusionPipeline(cfg, store)
     hub = ConnectionHub()
-    audit = AuditStore(store.connection)
+    # Share the store's lock: this connection is the same object the fusion
+    # loop writes transforms on. A private lock here would serialise audit
+    # against itself and still collide with save_transform — that collision
+    # is the 500 the CI integration check hit.
+    audit = AuditStore(store.connection, lock=store.lock)
     voxels = VoxelWorld(voxel_size=0.10)
     rti_state: dict[str, Any] = {"processor": None}
     # Runtime geo anchor. Overrides AURA_GEO_ANCHOR once set, so the operator

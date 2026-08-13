@@ -124,7 +124,8 @@ class CausalValidator:
 
         Returns ``(ok, first_bad_index, message)``.
         """
-        records = list(entries if entries is not None else self.entries)
+        with self._lock:
+            records = list(entries if entries is not None else self.entries)
         expected_prev = self.genesis
         for position, entry in enumerate(records):
             if entry.index != position:
@@ -143,13 +144,14 @@ class CausalValidator:
 
     # ------------------------------------------------------------------
     def export(self) -> dict:
-        return {
-            "genesis": self.genesis,
-            "count": len(self.entries),
-            "head": self.last_hash,
-            "hmac": bool(self.hmac_key),
-            "entries": [e.as_dict() for e in self.entries],
-        }
+        with self._lock:
+            return {
+                "genesis": self.genesis,
+                "count": len(self.entries),
+                "head": self.last_hash,
+                "hmac": bool(self.hmac_key),
+                "entries": [e.as_dict() for e in self.entries],
+            }
 
     @classmethod
     def load(cls, data: dict, hmac_key: bytes | None = None) -> "CausalValidator":
@@ -168,15 +170,18 @@ class CausalValidator:
             return [e.as_dict() for e in records[-count:]]
 
     def stats(self) -> dict:
-        by_severity: dict[str, int] = {}
-        by_actor: dict[str, int] = {}
-        for entry in self.entries:
+        with self._lock:
+            by_severity: dict[str, int] = {}
+            by_actor: dict[str, int] = {}
+            snapshot = list(self.entries)
+            head = self.last_hash
+        for entry in snapshot:
             by_severity[entry.severity] = by_severity.get(entry.severity, 0) + 1
             by_actor[entry.actor] = by_actor.get(entry.actor, 0) + 1
-        ok, bad_index, message = self.verify()
+        ok, bad_index, message = self.verify(snapshot)
         return {
-            "count": len(self.entries),
-            "head": self.last_hash,
+            "count": len(snapshot),
+            "head": head,
             "valid": ok,
             "first_bad_index": bad_index,
             "message": message,
@@ -207,14 +212,37 @@ CREATE INDEX IF NOT EXISTS idx_audit_severity ON audit_log(severity);
 
 
 class AuditStore:
-    """SQLite-backed audit chain (the IPSM-persisted log on the device)."""
+    """SQLite-backed audit chain (the IPSM-persisted log on the device).
 
-    def __init__(self, connection, validator: CausalValidator | None = None) -> None:
+    The connection is almost always the one owned by
+    :class:`~aura.storage.LocalVectorStore`. SQLite will not serialise two
+    threads talking to the same connection: without a shared lock, concurrent
+    ``append`` calls raise ``SystemError`` / ``OperationalError`` and the
+    inserts that did not crash simply never land. Measured: 200 threaded
+    appends kept 88 in memory and 69 on disk; sharing the connection with the
+    fusion loop's transform writer left 5 of 200. The REST handler surfaced
+    that as a 500 on ``POST /api/v1/agent/audit``.
+
+    Pass ``lock=store.lock``. A private lock on this object is not enough —
+    it does not exclude the fusion thread, which is the collision that
+    actually 500s.
+    """
+
+    def __init__(
+        self,
+        connection,
+        validator: CausalValidator | None = None,
+        lock: threading.RLock | None = None,
+    ) -> None:
         self.conn = connection
         self.validator = validator or CausalValidator()
-        self.conn.executescript(AUDIT_SCHEMA)
-        self.conn.commit()
-        self._restore()
+        # Own lock only when the caller is not sharing the connection. The
+        # production path (api.py) must pass LocalVectorStore.lock.
+        self._lock = lock or threading.RLock()
+        with self._lock:
+            self.conn.executescript(AUDIT_SCHEMA)
+            self.conn.commit()
+            self._restore()
 
     def _restore(self) -> None:
         rows = self.conn.execute("SELECT * FROM audit_log ORDER BY idx ASC").fetchall()
@@ -237,24 +265,28 @@ class AuditStore:
 
     def append(self, actor: str, action: str, payload: dict | None = None,
                severity: str = "info") -> AuditEntry:
-        entry = self.validator.append(actor, action, payload, severity)
-        self.conn.execute(
-            "INSERT INTO audit_log (idx, entry_id, timestamp, actor, action, severity, payload, prev_hash, chain_hash)"
-            " VALUES (?,?,?,?,?,?,?,?,?)",
-            (
-                entry.index,
-                entry.entry_id,
-                entry.timestamp,
-                entry.actor,
-                entry.action,
-                entry.severity,
-                canonical_json(entry.payload),
-                entry.prev_hash,
-                entry.chain_hash,
-            ),
-        )
-        self.conn.commit()
-        return entry
+        # Seal the chain *and* persist under the same lock. Splitting them
+        # lets a crash between the two leave an in-memory entry that is not
+        # on disk, so a restart silently shortens the chain.
+        with self._lock:
+            entry = self.validator.append(actor, action, payload, severity)
+            self.conn.execute(
+                "INSERT INTO audit_log (idx, entry_id, timestamp, actor, action, severity, payload, prev_hash, chain_hash)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
+                (
+                    entry.index,
+                    entry.entry_id,
+                    entry.timestamp,
+                    entry.actor,
+                    entry.action,
+                    entry.severity,
+                    canonical_json(entry.payload),
+                    entry.prev_hash,
+                    entry.chain_hash,
+                ),
+            )
+            self.conn.commit()
+            return entry
 
     def verify(self) -> tuple[bool, int | None, str]:
         return self.validator.verify()

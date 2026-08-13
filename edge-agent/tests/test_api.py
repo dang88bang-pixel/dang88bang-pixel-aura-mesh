@@ -335,6 +335,65 @@ def test_audit_append_and_chain_integrity(client):
         assert current["prev_hash"] == previous["chain_hash"]
 
 
+def test_audit_concurrent_posts_while_fusion_writes(tmp_path):
+    """The CI integration check that 500'd: POST /audit while the loop runs.
+
+    FastAPI runs sync handlers on a thread pool, the fusion loop writes
+    transforms on another thread, both against one SQLite connection.
+    Without the shared lock a single POST can raise SystemError and the
+    handler returns 500 — exactly what ``curl .../audit`` hit.
+    """
+    import threading
+
+    config = AgentConfig()
+    config.db_path = str(tmp_path / "live-audit.db")
+    config.simulate = True
+    config.project = "live-audit"
+    app = create_app(config, autostart=False)
+    pipeline = app.state.pipeline
+    for driver in pipeline.drivers:
+        driver.open()
+
+    stop = threading.Event()
+
+    def tick() -> None:
+        while not stop.is_set():
+            pipeline.tick()
+
+    fusion = threading.Thread(target=tick, name="fusion-tick", daemon=True)
+    fusion.start()
+    try:
+        with TestClient(app) as test_client:
+            statuses: list[int] = []
+            errors: list[str] = []
+
+            def post(n: int) -> None:
+                try:
+                    response = test_client.post(
+                        "/api/v1/agent/audit",
+                        json={"actor": "ci", "action": "ci.check", "payload": {"n": n}},
+                    )
+                    statuses.append(response.status_code)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(repr(exc))
+
+            workers = [threading.Thread(target=post, args=(n,)) for n in range(40)]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join()
+
+            assert errors == [], f"client raised: {errors[:3]}"
+            assert statuses.count(200) == 40, f"statuses={statuses}"
+            body = test_client.get("/api/v1/agent/audit/verify").json()
+            assert body["valid"], body
+    finally:
+        stop.set()
+        fusion.join(timeout=5)
+        for driver in pipeline.drivers:
+            driver.close()
+
+
 def test_audit_severity_filter(client):
     client.post("/api/v1/agent/audit", json={"action": "x", "severity": "security"})
     filtered = client.get("/api/v1/agent/audit?severity=security").json()["entries"]

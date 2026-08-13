@@ -155,6 +155,19 @@ class LocalVectorStore:
         """
         return self._conn
 
+    @property
+    def lock(self) -> threading.RLock:
+        """The mutex that serialises every use of :attr:`connection`.
+
+        SQLite connections are not safe for concurrent use even with
+        ``check_same_thread=False``. Anyone sharing this connection (the
+        audit store in particular) must take this lock around every
+        ``execute`` / ``commit``, or writes vanish under load. Measured
+        without it: 14–131 of 200 concurrent audit inserts dropped, and
+        the REST handler returned 500.
+        """
+        return self._lock
+
     def close(self) -> None:
         with self._lock:
             try:

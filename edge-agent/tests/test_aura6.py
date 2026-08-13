@@ -531,6 +531,95 @@ def test_severity_filtering_and_stats():
     assert validator.append("c", "w", severity="nonsense").severity == "info"
 
 
+def test_audit_store_keeps_every_concurrent_append(tmp_path):
+    """200 threaded appends must all land, in memory and on disk.
+
+    Without a lock around the SQLite write this lost 112 of 200 in memory
+    and 131 on disk (SystemError / OperationalError('not an error')). The
+    in-memory CausalValidator alone is fine — the loss is the connection.
+    Dropping ``lock=store.lock`` fails this test.
+    """
+    import threading
+
+    from aura.storage import LocalVectorStore
+
+    store = LocalVectorStore(tmp_path / "audit-race.db", "race")
+    audit = AuditStore(store.connection, lock=store.lock)
+    errors: list[BaseException] = []
+
+    def worker(n: int) -> None:
+        try:
+            for i in range(20):
+                audit.append("t", "act", {"n": n, "i": i})
+        except Exception as exc:  # noqa: BLE001 - we want every failure
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(10)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == [], f"append raised under concurrency: {errors[:3]}"
+    assert len(audit.validator.entries) == 200
+    ok, index, message = audit.verify()
+    assert ok, message
+    assert index is None
+    db_count = store.connection.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+    assert db_count == 200, f"disk lost {200 - db_count} of 200 entries"
+
+
+def test_audit_survives_concurrent_transform_writes(tmp_path):
+    """The collision the running agent actually hits.
+
+    Fusion writes transforms on the same connection the REST handler uses
+    for the audit chain. A private lock on AuditStore does not exclude
+    that writer. Measured without the shared lock: 5 of 200 audit entries
+    survived and POST /audit returned 500.
+    """
+    import threading
+
+    from aura.storage import LocalVectorStore
+
+    store = LocalVectorStore(tmp_path / "shared.db", "shared")
+    audit = AuditStore(store.connection, lock=store.lock)
+    errors: list[tuple[str, str]] = []
+
+    def write_transforms() -> None:
+        try:
+            for i in range(80):
+                store.save_transform(
+                    {"offset_x": i, "offset_y": 0, "offset_z": 0,
+                     "roll": 0, "pitch": 0, "yaw": 0}
+                )
+        except Exception as exc:  # noqa: BLE001
+            errors.append(("transform", repr(exc)))
+
+    def write_audit() -> None:
+        try:
+            for i in range(80):
+                audit.append("t", "act", {"i": i})
+        except Exception as exc:  # noqa: BLE001
+            errors.append(("audit", repr(exc)))
+
+    threads = [
+        threading.Thread(target=write_transforms),
+        threading.Thread(target=write_transforms),
+        threading.Thread(target=write_audit),
+        threading.Thread(target=write_audit),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == [], f"shared-connection writes failed: {errors[:4]}"
+    assert len(audit.validator.entries) == 160
+    assert audit.verify()[0]
+    db_count = store.connection.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+    assert db_count == 160
+
+
 def test_audit_store_persists_and_restores(tmp_path):
     path = tmp_path / "audit.db"
     conn = sqlite3.connect(str(path))
