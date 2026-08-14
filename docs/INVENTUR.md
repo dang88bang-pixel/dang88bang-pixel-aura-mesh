@@ -158,7 +158,7 @@ GitHub-Web-UI). 4/5/9/10 brauchen Hardware bzw. sind bewusst offen.
 
 | # | Punkt | Status | Aufwand | Voraussetzung |
 |---|---|---|---|---|
-| 1 | **APK bauen** (Manifest-Merger, AAPT2, echter Kotlin-Compile, JNI-Link) | ❌ fehlend (extern) | — | GitHub-Runner: `apk.yml` per Web-UI aktivieren (Push der Datei blockiert ohne `workflows`-Permission); erster Lauf wird echte Compiler-Fehler finden (Workflow rechnet damit) |
+| 1 | **APK bauen** (Manifest-Merger, AAPT2, echter Kotlin-Compile, JNI-Link) | ❌ fehlend (extern) | — | **Lösungsweg dokumentiert** in `docs/solution_path.md`: GitHub-Actions-Aktivierung über Web-UI (§4) oder Permission-Erteilung (§5); lokaler Build nachweislich unmöglich (§2/§3) |
 | ~~2~~ | ~~**`NativePassiveRadar` verdrahten**~~ (A6) | ✅ **erledigt** (Sim-Feed) | S | Rest: echte SDR-Hardware, siehe 4 |
 | ~~3~~ | ~~**`NativeVoxelCodec` + Chunk-Writer verdrahten**~~ | ✅ **erledigt** | M | `VoxelChunkWriter` + 39 Grid-Checks; End-to-End auf Gerät noch ausstehend (mit 1) |
 | 4 | **Hardware-Verifikation aller Sensoren** (v. a. DWM3000-Protokoll, RTL-SDR) | ❌ | L | physische Geräte; DWM3000: Board oder eigene Anchor-Firmware |

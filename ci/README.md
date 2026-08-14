@@ -36,7 +36,10 @@ git push
 
 You can also create the two files through the GitHub web UI (**Actions → new
 workflow**) and paste the contents — the web editor is not subject to the App
-permission.
+permission. A complete, step-by-step walkthrough of both activation routes
+(web UI vs. granting the App the `workflows` permission) plus what to expect
+from the first run lives in
+[`docs/solution_path.md`](../docs/solution_path.md).
 
 ## Getting the APK
 
