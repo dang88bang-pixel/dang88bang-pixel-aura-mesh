@@ -169,6 +169,28 @@ if [[ ! -f "$BUILD/out-lidar/LidarBaudTestKt.class" ]]; then
   exit 1
 fi
 
+echo "==> compiling the voxel-grid suite"
+mkdir -p "$BUILD/out-voxel"
+compile "$BUILD/out-voxel" \
+  "$APP/main/java/com/aura/agent/storage/VoxelGrid.kt" \
+  "$APP/test/kotlin/VoxelGridTest.kt"
+
+if [[ ! -f "$BUILD/out-voxel/VoxelGridTestKt.class" ]]; then
+  echo "error: voxel-grid suite produced no test class" >&2
+  exit 1
+fi
+
+echo "==> compiling the radar-simulator suite"
+mkdir -p "$BUILD/out-radar"
+compile "$BUILD/out-radar" \
+  "$APP/main/java/com/aura/agent/radar/RadarSimulator.kt" \
+  "$APP/test/kotlin/RadarSimulatorTest.kt"
+
+if [[ ! -f "$BUILD/out-radar/RadarSimulatorTestKt.class" ]]; then
+  echo "error: radar-simulator suite produced no test class" >&2
+  exit 1
+fi
+
 echo "==> running"
 STATUS=0
 "$JAVA" -cp "$BUILD/out:${KOTLIN_STDLIB:-}" AuditChainTestKt || STATUS=1
@@ -178,6 +200,8 @@ STATUS=0
 "$JAVA" -cp "$BUILD/out-geo:${KOTLIN_STDLIB:-}" GeoAnchorMathTestKt || STATUS=1
 "$JAVA" -cp "$BUILD/out-llm:${KOTLIN_STDLIB:-}" VectorStoreTestKt || STATUS=1
 "$JAVA" -cp "$BUILD/out-lidar:${KOTLIN_STDLIB:-}" LidarBaudTestKt || STATUS=1
+"$JAVA" -cp "$BUILD/out-voxel:${KOTLIN_STDLIB:-}" VoxelGridTestKt || STATUS=1
+"$JAVA" -cp "$BUILD/out-radar:${KOTLIN_STDLIB:-}" RadarSimulatorTestKt || STATUS=1
 
 if [[ $STATUS -ne 0 ]]; then
   echo

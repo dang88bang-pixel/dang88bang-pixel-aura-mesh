@@ -9,8 +9,8 @@ honest list of where problems are most likely to surface.
 
 | Layer | How | Result |
 |---|---|---|
-| Native core (`aura_core.cpp`) | `g++` on the host, plus ASan/UBSan | **618 assertions pass** |
-| Pure Kotlin logic (audit chain, UWB geometry, vitals) | `kotlinc` + host JVM (`tools/run-kotlin-tests.sh`) | **126 checks pass** |
+| Native core (`aura_core.cpp`) | `g++` on the host, plus ASan/UBSan | **634 assertions pass** |
+| Pure Kotlin logic (audit chain, UWB geometry, vitals, voxel grid, radar sim) | `kotlinc` + host JVM (`tools/run-kotlin-tests.sh`) | **286 checks pass** (9 suites) |
 | Manifest ↔ classes/resources | static gates in CI (`android-static`) | clean |
 | Imports ↔ Gradle dependencies | `tools/check-android-deps.py` | clean |
 | USB ids ↔ registry and code | `tools/check-usb-ids.py` | 7 ids valid |
@@ -129,10 +129,13 @@ Default is Qwen2.5-1.5B (10–16 t/s on a QCS4290); Phi-3-mini is opt-in at
 
 Ranked by how much I would bet on each one failing first.
 
-1. **`usb-serial-for-android` wiring.** `UsbSerialTransport` sets up permission
-   and device discovery but leaves the concrete `UsbSerialPort#open` to the
-   driver implementation — the streams are never assigned. Expect to finish this
-   against real hardware; the parsers it feeds are already tested (see
+1. **`usb-serial-for-android` against real hardware.** The wiring itself is
+   complete — `UsbSerialTransport.open()` assigns `UsbSerialPort`, sets
+   baud/8N1, asserts DTR/RTS (non-fatal when unsupported), and `read`/`write`
+   run through the driver — but no device has ever been connected here, so
+   the concrete `UsbSerialPort#open` and the vendor-specific probe remain
+   unverified against physical hardware. Expect to finish this against real
+   hardware; the parsers it feeds are already tested (see
    `test_lidar_packet_parser_decodes_legacy_nodes`).
 
 2. **UWB on Android 11.** The CT45P-X0N ships API 30; `androidx.core.uwb`
@@ -173,7 +176,19 @@ Two items that used to head this list are now closed:
   the C++ sources. It found a real gap on first run: the C++ exported
   `NativePassiveRadar_nativeProcess`/`nativeCfar` but no such Kotlin class
   existed, leaving the whole radar path unreachable from the app. The class is
-  now written.
+  now written — and since 2026-08-14 it is *constructed* by
+  `SensorFusionService.configureRadar()` and fed by `RadarSimulator` (same
+  physics as `passive_radar.py::simulate_surveillance`) until an SDR transport
+  exists, so the process → CFAR → detect path is exercised end to end in the
+  app just like the LiDAR/mmWave/UWB simulators.
+
+* **Voxel chunk writer** — `NativeVoxelCodec` was written and JNI-tested but
+  never reached: `voxelIngest()` persisted a placeholder event. It now drives
+  `VoxelChunkWriter`, which accumulates sweep occupancy, RLE-encodes touched
+  chunks via the native codec and stores them into `spatial_chunks` at 1 Hz.
+  The grid maths (floor division for negative coordinates, chunk indexing)
+  is host-tested (`VoxelGridTest`, 39 checks) so a coordinate-semantics change
+  cannot silently scramble every chunk on the agent.
 
 ---
 
@@ -186,7 +201,9 @@ tools/run-kotlin-tests.sh
 ```
 
 It regenerates the cross-platform digests from the Python reference, compiles
-`CausalValidator.kt` against a small `org.json` shim, and runs 44 checks.
+each pure-Kotlin module against a small `org.json` shim (or standalone), and
+runs 286 checks across 9 suites — audit chain, UWB geometry, position quality,
+geo anchor, vitals, vector store, LiDAR baud, voxel grid, radar simulator.
 
 The important one is `crossPlatformHashMatchesPython`. It caught two bugs that
 would have been invisible until a court asked why a CT45P's audit log did not

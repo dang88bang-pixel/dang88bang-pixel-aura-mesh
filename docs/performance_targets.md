@@ -155,7 +155,7 @@ test_micro_doppler_false_positive_rate_on_noise
   0/60 false detections on pure noise (was 33 % before the fix in §6)
 ```
 
-### Kotlin audit chain (44 checks, `tools/run-kotlin-tests.sh`)
+### Kotlin host suites (286 checks across 9 suites, `tools/run-kotlin-tests.sh`)
 ```
 canonical JSON, chain integrity, tamper/delete/reorder detection,
 HMAC forgery rejection, export/restore round trip, severity filtering
@@ -165,7 +165,7 @@ Runs on a plain JVM with kotlinc - no Android SDK, no Gradle, no Robolectric -
 so the logic that decides whether a survey is admissible is verified even where
 the Android toolchain is unavailable.
 
-### Native core (618 assertions, `test_aura_core.cpp`)
+### Native core (634 assertions, `test_aura_core.cpp`)
 ```
 RTI peak error        0.177 m   (Python reference: 0.180 m)
 ECA cancellation      75.6 dB

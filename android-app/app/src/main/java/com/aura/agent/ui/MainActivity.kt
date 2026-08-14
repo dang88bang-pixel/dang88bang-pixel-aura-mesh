@@ -318,6 +318,7 @@ class LiveViewFragment : Fragment(), ServiceAware {
             state.lidarPoints,
             state.uwbAnchorsInView,
             state.mmwaveTargets,
+            state.radarDetections,
             if (snapshot?.converged == true) "OK" else "…",
         )
     }

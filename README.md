@@ -17,10 +17,10 @@ CT45P-X0N (Kotlin + C++/NEON)  ──REST/WS──▶  Edge agent (Python)  ─�
 
 | Component | State | Verification |
 |---|---|---|
-| Edge agent (Python) | working, runnable | **162 tests pass** |
-| Native core (C++17/NEON) | compiles, cross-checked vs Python | **618 assertions pass** |
+| Edge agent (Python) | working, runnable | **300 tests pass** |
+| Native core (C++17/NEON) | compiles, cross-checked vs Python | **634 assertions pass** |
 | Web visualiser (Babylon.js) | working, runnable | live against the agent at 10 Hz |
-| Kotlin audit chain | compiles and runs on a host JVM | **44 checks pass**, digests pinned to Python |
+| Kotlin host suites (9) | compile and run on a host JVM | **286 checks pass**, digests pinned to Python |
 | JNI layer | compiled against a stub `jni.h` | **28/28 symbols matched** both ways |
 | Android app (full APK) | complete source, **never assembled** | no Android SDK reachable here |
 
@@ -91,13 +91,14 @@ android-app/                     Kotlin + C++ for the CT45P
   app/src/main/cpp/              native core (no Eigen/FFTW dependency)
     aura_core.{h,cpp}            EKF · FISTA · CAF/ECA · voxel RLE
     aura_jni.cpp                 JNI bridge (handle-based, zero-copy)
-    tests/test_aura_core.cpp     618 assertions, runs on any host
+    tests/test_aura_core.cpp     634 assertions, runs on any host
   app/src/main/java/com/aura/agent/
     fusion/    NativeEkf · SensorFusionService
     sensors/   LiDAR · mmWave · BLE · IMU + StaticDetector
     rti/       NativeRti
+    radar/     NativePassiveRadar (simulated IQ until an SDR is attached)
     security/  CausalValidator (audit chain)
-    storage/   LocalVectorStore · NativeVoxelCodec
+    storage/   LocalVectorStore · NativeVoxelCodec · VoxelChunkWriter
     network/   AgentApiClient (backoff + jitter)
     llm/       LLMService (llama.cpp + RAG)
     ui/        MainActivity · custom views
@@ -110,7 +111,7 @@ edge-agent/                      Python reference implementation
   aura/voxel.py                  chunked sparse voxels + SVO
   aura/scenarios.py              flow-field + social-force evacuation
   aura/audit.py                  SHA-256 hash chain
-  tests/                         162 tests
+  tests/                         300 tests
 
 web-visualizer/                  Babylon.js 7
   server.js                      static host + REST proxy + WS bridge
@@ -119,7 +120,7 @@ web-visualizer/                  Babylon.js 7
 
 docs/
   architecture.md                design and rationale
-  api_reference.md               39 routes (37 REST + WS + /health)
+  api_reference.md               41 routes (40 REST + WS)
   performance_targets.md         measured vs specified, and why
   android_build.md               how to actually assemble the APK
   source_claims.md               every hardware constant, and how sure we are
@@ -148,15 +149,15 @@ tools/
 ## Running the tests
 
 ```bash
-# Python: 162 tests
+# Python: 300 tests
 cd edge-agent && python -m pytest tests/ -q
 
-# Native: 618 assertions, no Android toolchain required
+# Native: 634 assertions, no Android toolchain required
 cd android-app/app/src/main/cpp/tests
 g++ -std=c++17 -O2 -I.. test_aura_core.cpp ../aura_core.cpp -o /tmp/aura_test
 /tmp/aura_test
 
-# Kotlin: 44 checks, needs only a JRE + kotlinc (no Android SDK)
+# Kotlin: 286 checks across 9 suites, needs only a JRE + kotlinc (no Android SDK)
 tools/run-kotlin-tests.sh
 
 # JNI: every `external fun` must have a matching native symbol

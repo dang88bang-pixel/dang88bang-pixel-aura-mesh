@@ -1,6 +1,6 @@
 # CI pipelines
 
-Two workflow definitions live here:
+Two workflow definitions live here (canonical copies):
 
 | file | purpose |
 |---|---|
@@ -18,10 +18,11 @@ remote:
   workflow `.github/workflows/...` without `workflows` permission
 ```
 
-This was last confirmed on 2026-08-13. A later session may have the
-permission; activating them is still the one step that can be rejected by
-the remote, and it takes about ten seconds. The copies in `ci/` stay so a
-rejected push does not lose the definitions.
+Re-confirmed **2026-08-14**: an activation commit was prepared and the push
+failed with exactly this error, so the branch stays without `.github/workflows/`.
+A working copy of the two files currently sits in the local tree under
+`.github/workflows/` (untracked, not pushed) — the moment the App gains the
+permission, commit and push those. Until then the web UI is the fallback.
 
 ## Activation
 

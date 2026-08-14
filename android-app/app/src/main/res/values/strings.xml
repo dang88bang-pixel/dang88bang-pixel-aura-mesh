@@ -52,7 +52,7 @@
     <string name="live_vitals_resp">Durch-Wand: Atmung %1$.0f/min · Puls nicht auswertbar</string>
     <string name="live_vitals_none">Durch-Wand: keine Vitalzeichen erkannt</string>
     <string name="live_vitals_no_uwb">Durch-Wand: kein UWB-Sensor verbunden</string>
-    <string name="live_device_status">%1$d Zyklen · %2$d LiDAR-Punkte · %3$d UWB-Anker · %4$d mmWave-Ziele · EKF %5$s</string>
+    <string name="live_device_status">%1$d Zyklen · %2$d LiDAR-Punkte · %3$d UWB-Anker · %4$d mmWave-Ziele · %5$d Radar-Ziele · EKF %6$s</string>
     <!-- Scenario control -->
     <string name="scenario_starting">Szenario wird gestartet…</string>
     <string name="scenario_unreachable">Agent nicht erreichbar (%1$s). URL in den Einstellungen prüfen.</string>

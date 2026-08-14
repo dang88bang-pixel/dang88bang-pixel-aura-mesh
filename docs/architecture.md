@@ -12,7 +12,8 @@ environment around a Honeywell CT45P-X0N handheld:
 │  Kotlin layer                                                         │
 │    sensors/   LiDAR · mmWave · BLE · IMU · UWB drivers               │
 │    fusion/    SensorFusionService  (foreground service, 20 Hz)       │
-│    storage/   LocalVectorStore     (SQLite + WAL)                     │
+│    radar/     NativePassiveRadar   (simulated IQ until SDR attached) │
+│    storage/   LocalVectorStore + VoxelChunkWriter (SQLite + WAL)     │
 │    security/  CausalValidator      (SHA-256 audit chain)             │
 │    llm/       LLMService           (llama.cpp, optional)             │
 │    ui/        4 tabs; the map tab hosts the shared Babylon bundle    │
@@ -189,14 +190,15 @@ same-origin relative URLs.
 
 | Suite | Count | What it covers |
 |---|---|---|
-| `test_ekf.py` | 12 | kinematics, Jacobians, updates, numerical stability |
-| `test_sensors.py` | 30 | protocol parsers, simulators, vital signs, FPR |
-| `test_mapping_storage.py` | 24 | grid, RANSAC, glTF, SQLite, retention |
+| `test_ekf.py` | 18 | kinematics, Jacobians, updates, numerical stability |
+| `test_sensors.py` | 33 | protocol parsers, simulators, vital signs, FPR |
+| `test_mapping_storage.py` | 21 | grid, RANSAC, glTF, SQLite, retention |
 | `test_scenarios_fusion.py` | 25 | flow field, smoke, tracker, full pipeline |
-| `test_aura6.py` | 43 | RTI, passive radar, voxels, audit chain |
-| `test_api.py` | 31 | REST, auth, WebSocket, AURA 6.0 routes |
-| `test_aura_core.cpp` | 618 assertions | the native port, cross-checked vs Python |
-| `AuditChainTest.kt` | 44 checks | the Kotlin audit chain, digests pinned to Python |
+| `test_aura6.py` | 45 | RTI, passive radar, voxels, audit chain |
+| `test_api.py` | 37 | REST, auth, WebSocket, AURA 6.0 routes |
+| `test_cot.py` · `test_mesh.py` · `test_rf_mapping.py` · `test_sensor_health.py` · `test_tdoa.py` · `test_ekf_gating.py` | 121 | CoT/TAK, mesh budget, RF mapping, freeze detection, TDoA, gating |
+| `test_aura_core.cpp` | 634 assertions | the native port, cross-checked vs Python |
+| Kotlin host suites (9) | 286 checks | audit chain (44), UWB geometry (55), position quality (27), geo anchor (45), vitals (24), vector store (20), LiDAR baud (8), voxel grid (39), radar simulator (24); digests pinned to Python |
 
 Run everything:
 

@@ -28,11 +28,15 @@ import com.aura.agent.sensors.UsbSerialTransport
 import com.aura.agent.sensors.UwbManager
 import com.aura.agent.sensors.UwbReading
 import com.aura.agent.sensors.VitalsEstimator
+import com.aura.agent.radar.NativePassiveRadar
+import com.aura.agent.radar.RadarDetection
+import com.aura.agent.radar.RadarSimulator
 import com.aura.agent.rti.NativeRti
 import com.aura.agent.rti.RtiNode
 import com.aura.agent.rti.RtiTarget
 import com.aura.agent.storage.LocalVectorStore
 import com.aura.agent.storage.Transform3D
+import com.aura.agent.storage.VoxelChunkWriter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -57,6 +61,8 @@ private const val VITALS_INTERVAL_MS = 2000L    // re-estimate every 2 s
 private const val RTI_MARGIN_M = 1.0f
 private const val RTI_INTERVAL_MS = 500L
 private const val RTI_MAX_VOXELS = 20000
+/** Passive-radar dwell cadence (CAF is expensive; see onIqSamples). */
+private const val RADAR_INTERVAL_MS = 1000L
 private const val CHANNEL_ID = "aura_fusion"
 private const val NOTIFICATION_ID = 4711
 
@@ -94,6 +100,14 @@ class SensorFusionService : Service() {
     private var lastVoxelWriteAt = 0L
     private var deviceHeight = 1.4f
 
+    /**
+     * Chunked voxel map writer. The sweep is 2D LiDAR at [deviceHeight], so
+     * [VoxelChunkWriter.ingest] lifts each point to that single z layer and
+     * accumulates occupancy across sweeps; chunks are RLE-encoded by
+     * `NativeVoxelCodec` and persisted at 1 Hz into `spatial_chunks`.
+     */
+    private var voxelWriter: VoxelChunkWriter? = null
+
     /** Surveyed UWB anchor positions; empty until the site is configured. */
     val uwbAnchors = mutableMapOf<String, FloatArray>()
 
@@ -110,6 +124,22 @@ class SensorFusionService : Service() {
     private val _rtiTargets = MutableStateFlow<List<RtiTarget>>(emptyList())
     val rtiTargets: StateFlow<List<RtiTarget>> = _rtiTargets.asStateFlow()
     private var lastRtiAt = 0L
+
+    /**
+     * Passive bistatic radar over an attached SDR.
+     *
+     * Like every other sensor this is optional: with no RTL-SDR/HackRF on the
+     * USB port the feed is driven by [RadarSimulator] so the whole
+     * process -> CFAR -> detect path is exercised end to end, exactly like the
+     * LiDAR/mmWave/UWB simulators. The moment a real SDR transport exists,
+     * [onIqSamples] is fed from hardware instead.
+     */
+    private var radar: NativePassiveRadar? = null
+    private var lastRadarAt = 0L
+
+    /** Latest CFAR detections; empty while nothing is being processed. */
+    private val _radarDetections = MutableStateFlow<List<RadarDetection>>(emptyList())
+    val radarDetections: StateFlow<List<RadarDetection>> = _radarDetections.asStateFlow()
 
     /**
      * Rolling CIR amplitude history for the vitals estimator.
@@ -178,6 +208,68 @@ class SensorFusionService : Service() {
         _rtiTargets.value = engine.extractTargets(image)
     }
 
+    /**
+     * Construct the radar engine. Idempotent; returns false only when the
+     * native library is unavailable (stub build), which the caller should
+     * surface rather than silently running without radar.
+     */
+    fun configureRadar(sampleRate: Float = 2.4e6f, carrierHz: Float = 626e6f): Boolean {
+        if (radar != null) return true
+        return try {
+            radar = NativePassiveRadar(sampleRate, carrierHz)
+            audit.append(
+                "radar", "configured",
+                JSONObject().put("sampleRate", sampleRate).put("carrierHz", carrierHz),
+                Severity.NOTICE,
+            )
+            true
+        } catch (e: UnsatisfiedLinkError) {
+            Log.w(TAG, "radar unavailable: ${'$'}{e.message}")
+            false
+        }
+    }
+
+    /**
+     * Feed one SDR dwell into the radar engine.
+     *
+     * Throttled: a CAF dwell is expensive (the native side batches it), and a
+     * 16 k-sample dwell at 2.4 MSps lasts 6.8 ms — more than 100 Hz of input
+     * would queue up behind the processing anyway.
+     */
+    fun onIqSamples(
+        surveillance: FloatArray,
+        reference: FloatArray,
+        timestamp: Long = System.currentTimeMillis(),
+    ) {
+        val engine = radar ?: return
+        val now = System.currentTimeMillis()
+        if (now - lastRadarAt < RADAR_INTERVAL_MS) return
+        lastRadarAt = now
+
+        val map = engine.process(surveillance, reference) ?: return
+        val detections = engine.detect(map)
+        _radarDetections.value = detections
+        _state.value = _state.value.copy(
+            radarActive = true,
+            radarDetections = detections.size,
+        )
+        if (detections.isNotEmpty()) {
+            val top = detections.first()
+            store.saveEvent(
+                "radar",
+                JSONObject().apply {
+                    put("detections", detections.size)
+                    put("range_m", top.bistaticRange)
+                    put("doppler_hz", top.dopplerHz)
+                    put("velocity_ms", top.velocity)
+                    put("snr_db", top.snrDb)
+                    put("backend", "sim")
+                },
+                timestamp,
+            )
+        }
+    }
+
     /** Storage diagnostics for the settings tab; null before the service starts. */
     fun storeStats(): JSONObject? =
         if (::store.isInitialized) runCatching { store.stats() }.getOrNull() else null
@@ -199,6 +291,7 @@ class SensorFusionService : Service() {
         imu = ImuManager(applicationContext)
         ble = BleScanner(applicationContext)
         audit = CausalValidator()
+        voxelWriter = VoxelChunkWriter(store)
         createNotificationChannel()
         audit.append("service", "fusion.create", severity = Severity.NOTICE)
     }
@@ -391,6 +484,31 @@ class SensorFusionService : Service() {
             }
         }
 
+        // --- passive radar --------------------------------------------
+        // Simulated IQ until an SDR transport exists; the processing path
+        // (CAF -> CFAR -> detect) is identical to the hardware case, so the
+        // only thing that changes is the byte source.
+        scope.launch {
+            if (!configureRadar()) {
+                _state.value = _state.value.copy(radarActive = false)
+                return@launch
+            }
+            val sim = RadarSimulator()
+            val walk = java.util.Random(0x5EED)
+            while (isActive) {
+                val dwell = sim.dwell(
+                    durationMs = 6.8f,
+                    target = RadarSimulator.TargetSpec(
+                        bistaticRangeM = 15f + walk.nextFloat() * 40f,
+                        dopplerHz = 25f + walk.nextFloat() * 70f,
+                        amplitude = 0.02f,
+                    ),
+                )
+                onIqSamples(dwell.surveillance, dwell.reference)
+                delay(RADAR_INTERVAL_MS)
+            }
+        }
+
         // --- BLE multilateration --------------------------------------
         scope.launch {
             while (isActive) {
@@ -453,22 +571,27 @@ class SensorFusionService : Service() {
     /**
      * Fold a projected sweep into the persistent voxel map.
      *
-     * Chunks are written at most once per second: the RLE codec is cheap but
-     * SQLite writes are not, and at 10 sweeps/second the WAL would grow faster
-     * than the retention job trims it.
+     * Sweeps are accumulated in memory by [VoxelChunkWriter] and flushed at
+     * most once per second: the RLE codec is cheap but SQLite writes are not,
+     * and at 10 sweeps/second the WAL would grow faster than the retention
+     * job trims it.
      */
     private fun voxelIngest(points: FloatArray, timestamp: Long) {
+        val writer = voxelWriter ?: return
+        writer.ingest(points, deviceHeight)
         if (timestamp - lastVoxelWriteAt < 1000) return
         lastVoxelWriteAt = timestamp
-        // Persisted as an event for now; the chunked writer lands with the
-        // native voxel codec wiring (see docs/android_build.md).
-        store.saveEvent(
-            "lidar",
-            JSONObject()
-                .put("points", points.size / 2)
-                .put("timestamp", timestamp / 1000.0),
-            timestamp,
-        )
+        val written = writer.flush()
+        if (written > 0) {
+            store.saveEvent(
+                "voxels",
+                JSONObject()
+                    .put("chunks", written)
+                    .put("points", points.size / 2)
+                    .put("timestamp", timestamp / 1000.0),
+                timestamp,
+            )
+        }
     }
 
     fun attachLidar(manager: LidarManager) { lidar = manager }
@@ -506,6 +629,7 @@ class SensorFusionService : Service() {
         uwb?.stop()
         rti?.close()
         rti = null
+        radar = null
         scope.cancel()
         ekf.close()
         store.close()
@@ -547,5 +671,9 @@ data class FusionState(
     val heartRateBpm: Float? = null,
     val mmwaveTargets: Int = 0,
     val movingTargets: Int = 0,
+    /** Passive radar: true once the engine is configured and processing. */
+    val radarActive: Boolean = false,
+    /** Detections from the last radar dwell. */
+    val radarDetections: Int = 0,
     val running: Boolean = false,
 )

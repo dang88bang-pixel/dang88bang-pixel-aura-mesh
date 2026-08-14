@@ -37,8 +37,8 @@ modules as missing. That analysis does not describe this repository. Checked:
 | `uwb_processor.py` — "UWB-Signalverarbeitung fehlt" | `aura/doppler.py` + `VitalsEstimator` |
 | `mqtt_bridge.py` | genuinely absent — MQTT is optional in the spec |
 | Web-Visualizer "keine 3D-Viewer-Logik" | 6 modules incl. `SceneManager.js` |
-| Android "nur Build-Dateien, keine Kotlin-Quellen" | **24 Kotlin files**, ~4 250 lines |
-| Tests "fehlen" | **195 passing**, plus 171 Kotlin and 618 C++ checks |
+| Android "nur Build-Dateien, keine Kotlin-Quellen" | **31 Kotlin files** (22 source + 9 test/shim), ~5 800 source lines |
+| Tests "fehlen" | **300 passing**, plus 286 Kotlin and 634 C++ checks |
 | CI/CD "fehlen" | `ci/github-actions-{ci,apk}.yml` |
 
 The suggested replacement code would also be a regression. Its `AdaptiveEKF`
